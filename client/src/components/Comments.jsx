@@ -60,7 +60,7 @@ export default function Comments({ targetIri, title = "Discussion", projectGithu
   const repliesOf = (id) => comments.filter((c) => c.parent_id === id);
 
   return (
-    <aside className="w-80 mb-7.25 shrink-0 border-l border-ink-700 flex flex-col bg-ink-950/95">
+    <aside className="w-80 shrink-0 border-l border-ink-700 flex flex-col bg-ink-950/95">
       <header className="p-3 border-b border-ink-700 flex items-center justify-between">
         <div>
           <div className="text-sm font-semibold">{title}</div>

@@ -9,6 +9,7 @@ import { cacheGet, cacheInvalidate, cacheSet } from "./queryCache.js";
 const { Store, NamedNode, BlankNode, Literal, DefaultGraph, Quad, namedNode, literal } = oxigraph;
 
 const _workerUrl = new URL("./rdfLoadWorker.js", import.meta.url);
+const _serializeWorkerUrl = new URL("./rdfSerializeWorker.js", import.meta.url);
 
 /**
  * Parse RDF text in a worker thread (non-blocking) and return N-Quads.
@@ -24,6 +25,33 @@ export function loadRdfTextInWorker(text, format, graphIri, baseIri) {
       worker.terminate().catch(() => {});
       if (!ok) return reject(new Error(error));
       resolve(nquads);
+    });
+    worker.once("error", (err) => {
+      worker.terminate().catch(() => {});
+      reject(err);
+    });
+  });
+}
+
+/**
+ * Serialize an ontology's named graph to formatted Turtle in a worker thread.
+ * Dumps the graph as N-Quads (fast Rust op), then offloads the JS-heavy
+ * canonical sort / blank-node renaming / text build to a worker so the main
+ * event loop stays free for follow-up GET requests while the persist timer fires.
+ */
+function serializeInWorker(ontologyId, record) {
+  if (!store || !ontologyId) return Promise.resolve("");
+  const g = graphIriFor(ontologyId);
+  const nquads = store.dump({ format: "application/n-quads", from_graph_name: namedNode(g) });
+  if (!nquads.trim()) return Promise.resolve("");
+  return new Promise((resolve, reject) => {
+    const worker = new Worker(_serializeWorkerUrl, {
+      workerData: { nquads, record: record ?? null, graphIri: g },
+    });
+    worker.once("message", ({ ok, text, error }) => {
+      worker.terminate().catch(() => {});
+      if (!ok) return reject(new Error(error));
+      resolve(text);
     });
     worker.once("error", (err) => {
       worker.terminate().catch(() => {});
@@ -267,7 +295,9 @@ export async function persistOntology(ontologyId) {
   trackedOntologyIds.add(ontologyId);
   try {
     const record = await getOntology(ontologyId).catch(() => null);
-    const text = generateFormattedTurtle(ontologyId, record);
+    // Use worker serialization so the main event loop stays free during
+    // the debounced persist timer (avoids blocking follow-up GET requests).
+    const text = await serializeInWorker(ontologyId, record);
     // mkdir({ recursive: true }) is a no-op when the dir already exists.
     await fs.promises.mkdir(ONTO_DIR, { recursive: true });
 
@@ -365,7 +395,7 @@ export async function writeFileToDisk(ontologyId) {
   trackedOntologyIds.add(ontologyId);
   try {
     const record = await getOntology(ontologyId).catch(() => null);
-    const text = generateFormattedTurtle(ontologyId, record);
+    const text = await serializeInWorker(ontologyId, record);
 
     const isBranch = !!record?.branch_of;
     const filePath = isBranch

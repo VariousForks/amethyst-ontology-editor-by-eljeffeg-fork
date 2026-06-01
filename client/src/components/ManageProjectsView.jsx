@@ -41,6 +41,7 @@ export default function ManageProjectsView({ onOntologiesChanged }) {
 
   const [showNewProject, setShowNewProject] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
+  const [loadingProjectIds, setLoadingProjectIds] = useState(() => new Set());
   const [flash, setFlash] = useState(null);
   // ID of a newly created project to switch to once it appears in the list.
   const [pendingProjectSwitch, setPendingProjectSwitch] = useState(null);
@@ -124,6 +125,20 @@ export default function ManageProjectsView({ onOntologiesChanged }) {
     }
   };
 
+  // Fire warm-up GET requests so the card spinner clears once the server's
+  // event loop is free (after worker serialization finishes).
+  const warmUp = useCallback((projectId) => {
+    if (!projectId) return;
+    setLoadingProjectIds((prev) => new Set([...prev, String(projectId)]));
+    Promise.all([api.classes().catch(() => {}), api.graph("full").catch(() => {})]).finally(() => {
+      setLoadingProjectIds((prev) => {
+        const next = new Set(prev);
+        next.delete(String(projectId));
+        return next;
+      });
+    });
+  }, []);
+
   return (
     <div ref={scrollRef} className="flex-1 flex flex-col min-h-0 overflow-auto">
       <div className="border-b border-ink-700 bg-ink-900/70 px-5 py-3 flex items-center gap-3">
@@ -184,6 +199,8 @@ export default function ManageProjectsView({ onOntologiesChanged }) {
             currentUserId={user?.id}
             onFlash={flashMsg}
             onRefresh={handleRefresh}
+            onWarmUp={warmUp}
+            isLoadingOntology={loadingProjectIds.has(String(p.id))}
             onSwitchProject={() => switchProject(p.id)}
             onOpenUsers={() => setUsersProjectId(usersProjectId === p.id ? null : p.id)}
             usersOpen={usersProjectId === p.id}
@@ -211,6 +228,7 @@ export default function ManageProjectsView({ onOntologiesChanged }) {
               setExpandedProjects((prev) => new Set([...prev, String(newId)]));
             }
             await handleRefresh();
+            if (newId) warmUp(newId);
           }}
         />
       )}
@@ -245,6 +263,8 @@ function ProjectCard({
   currentUserId,
   onFlash,
   onRefresh,
+  onWarmUp,
+  isLoadingOntology,
   onSwitchProject,
   onOpenUsers,
   usersOpen,
@@ -434,6 +454,33 @@ function ProjectCard({
               <span className="hidden md:inline">Users</span>
             </button>
           )}
+          {/* Loading ontology spinner */}
+          {isLoadingOntology && (
+            <span className="flex items-center gap-1.5 text-xs text-slate-400 ml-1">
+              <svg
+                aria-hidden="true"
+                className="animate-spin h-3 w-3 text-brand-400 shrink-0"
+                xmlns="http://www.w3.org/2000/svg"
+                fill="none"
+                viewBox="0 0 24 24"
+              >
+                <circle
+                  className="opacity-25"
+                  cx="12"
+                  cy="12"
+                  r="10"
+                  stroke="currentColor"
+                  strokeWidth="4"
+                />
+                <path
+                  className="opacity-75"
+                  fill="currentColor"
+                  d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"
+                />
+              </svg>
+              <span className="hidden sm:inline">Loading…</span>
+            </span>
+          )}
         </div>
       </div>
 
@@ -583,6 +630,7 @@ function ProjectCard({
             onRefresh?.();
             const newId = r?.ontology?.id || r?.id;
             if (newId) setWriteTarget(newId);
+            if (newId) onWarmUp?.(project.id);
           }}
         />
       )}

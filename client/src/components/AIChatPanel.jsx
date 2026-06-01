@@ -141,7 +141,7 @@ export default function AIChatPanel({ ontologyId, entityIri, onClose }) {
 
   if (!githubConnection) {
     return (
-      <aside className="w-80 mb-7.25 shrink-0 border-l border-ink-700 flex flex-col bg-ink-950/95">
+      <aside className="w-80 shrink-0 border-l border-ink-700 flex flex-col bg-ink-950/95">
         <PanelHeader
           model={model}
           models={MODELS}
@@ -166,7 +166,7 @@ export default function AIChatPanel({ ontologyId, entityIri, onClose }) {
   }
 
   return (
-    <aside className="w-80 mb-7.25 shrink-0 border-l border-ink-700 flex flex-col bg-ink-950/95">
+    <aside className="w-80 shrink-0 border-l border-ink-700 flex flex-col bg-ink-950/95">
       <PanelHeader
         model={model}
         models={MODELS}
