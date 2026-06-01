@@ -2,6 +2,8 @@
 
 A light-weight, collaborative, web-based **OWL 2** ontology editor for non-experts, with built-in authentication, multi-project workspaces, per-ontology branching with merge, GitHub integration, SPARQL, an interactive graph view, an AI assistant, and other tools.
 
+If you’re using Amethyst, please ★ this repository to show your interest!
+
 ## Features
 
 <img align="right" width="45%" src="docs/images/landscape.png" alt="Semantic Landscape">
@@ -73,7 +75,7 @@ Oxigraph runs **in-process** via its WASM Node bindings: SPARQL 1.1 queries and 
 The whole thing is one container. You only need Docker.
 
 ```bash
-docker compose up --build
+docker compose up
 ```
 
 Open http://localhost:3000 — the first account you register becomes admin.
@@ -88,6 +90,12 @@ Override the session secret for production:
 
 ```bash
 SESSION_SECRET="some-long-random-string" docker compose up -d
+```
+
+## Local build (Docker)
+
+```bash
+docker compose up --build
 ```
 
 ## Local development (no Docker)
@@ -267,16 +275,6 @@ When enabled, on startup the container:
 Auth: GCS uses the standard service-account / workload-identity flow (`GOOGLE_APPLICATION_CREDENTIALS` if needed); S3 uses `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY`.
 
 Only the SQLite files are replicated. Ontology Turtle files in `DATA_DIR/ontologies/` should sit on a persistent volume or FUSE-mounted bucket (GCSFuse / s3fs).
-
-## Tech stack
-
-- **Frontend** — React 19, Vite 8, Tailwind 4, Cytoscape.js 3.33 with dagre 2.5 + fcose 2.2 layouts, React Router 7, marked, lucide-react.
-- **Backend** — Node 25 (Alpine in Docker), Express 5.
-- **RDF** — Oxigraph 0.5 (WASM Node build, SPARQL 1.1 compliant, in-memory + Turtle snapshots per ontology).
-- **Users / sessions / projects / audit** — better-sqlite3 12 or pg 8; bcryptjs; express-session with `better-sqlite3-session-store` or `connect-pg-simple`.
-- **Mail** — nodemailer (optional).
-- **Auth** — google-auth-library for Google OAuth; GitHub OAuth / PAT for repo + discussions integration.
-- **Backups** — Litestream (GCS or S3 replicas).
 
 ## License
 
