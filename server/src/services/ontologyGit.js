@@ -95,11 +95,21 @@ export async function createBranch(branchId, parentId) {
  */
 export async function deleteBranch(branchId) {
   const dir = path.join(BRANCHES_DIR, branchId);
+  // Prevent path traversal: confirm resolved path stays inside BRANCHES_DIR
+  const safeDir = path.resolve(dir);
+  const safeBase = path.resolve(BRANCHES_DIR);
+  if (!safeDir.startsWith(safeBase + path.sep)) {
+    throw new Error("[ontologyBranch] path traversal blocked");
+  }
+  // Sanitize branchId for log messages to prevent log injection
+  const safeId = String(branchId)
+    .replace(/[\r\n]/g, " ")
+    .slice(0, 80);
   try {
-    await fs.promises.rm(dir, { recursive: true, force: true });
-    console.log(`[ontologyBranch] deleted branch directory for ${branchId}`);
+    await fs.promises.rm(safeDir, { recursive: true, force: true });
+    console.log(`[ontologyBranch] deleted branch directory for ${safeId}`);
   } catch (err) {
-    console.warn(`[ontologyBranch] deleteBranch failed for ${branchId}:`, err.message);
+    console.warn(`[ontologyBranch] deleteBranch failed for ${safeId}:`, err.message);
   }
 }
 

@@ -46,6 +46,16 @@ const upload = multer({
  * Allows only http: and https: and blocks loopback, link-local, RFC1918 ranges,
  * and well-known cloud metadata endpoints.
  */
+// Strips trailing '#' and '/' characters from an IRI/URL without using a
+// quantifier+anchor regex that backtrack polynomially on crafted strings.
+function stripIriTrailing(s) {
+  let end = s.length;
+  while (end > 0 && (s[end - 1] === "#" || s[end - 1] === "/")) end--;
+  return end < s.length ? s.slice(0, end) : s;
+}
+
+// Returns the validated, normalized URL string to use downstream.
+// Throws if the URL targets private/internal infrastructure (SSRF prevention).
 function validateFetchUrl(url) {
   let parsed;
   try {
@@ -77,6 +87,8 @@ function validateFetchUrl(url) {
   if (BLOCKED.some((re) => re.test(host))) {
     throw new Error(`Disallowed host: ${host}`);
   }
+  // Return the normalized URL from the parsed object (not the raw input)
+  return parsed.href;
 }
 
 /**
@@ -85,11 +97,13 @@ function validateFetchUrl(url) {
  */
 function httpGet(url, redirectsLeft = 5) {
   return new Promise((resolve, reject) => {
-    const parsed = new URL(url);
+    // validateFetchUrl throws on unsafe URLs and returns the normalized URL;
+    // use safeUrl downstream so the value flowing into lib.get is sanitized.
+    const safeUrl = validateFetchUrl(url);
+    const parsed = new URL(safeUrl);
     const lib = parsed.protocol === "https:" ? https : http;
-    validateFetchUrl(url); // SSRF guard — checked here so redirects are also validated
     const req = lib.get(
-      url,
+      safeUrl,
       {
         headers: {
           Accept:
@@ -508,7 +522,7 @@ async function importAsNewOntology(req, res) {
 
   if (req.body?.url) {
     const url = req.body.url.toString().trim();
-    filename = (url.split("?")[0].split("/").pop() || "remote").replace(/[#/]+$/, "") || "remote";
+    filename = stripIriTrailing(url.split("?")[0].split("/").pop() || "remote") || "remote";
     loadFn = (store, gNode) => loadUrlWithImportsAsSiblings(url, store, gNode, projectId, uid);
   } else {
     const { text, format, filename: fn } = readUpload(req);
@@ -624,7 +638,7 @@ async function importAsNewProject(req, res) {
 
   if (req.body?.url) {
     const url = req.body.url.toString().trim();
-    filename = (url.split("?")[0].split("/").pop() || "remote").replace(/[#/]+$/, "") || "remote";
+    filename = stripIriTrailing(url.split("?")[0].split("/").pop() || "remote") || "remote";
     prepareLoad = (projectId) => (store, gNode) =>
       loadUrlWithImportsAsSiblings(url, store, gNode, projectId, uid);
   } else {

@@ -34,8 +34,11 @@ router.get("/", requireAuth, requireRole("admin"), async (_req, res) => {
 router.post("/", requireAuth, requireRole("admin"), async (req, res) => {
   const { email: rawEmail, role = "user" } = req.body || {};
   const email = rawEmail ? String(rawEmail).trim() : null;
-  if (email && !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email))
-    return res.status(400).json({ error: "invalid email" });
+  if (email) {
+    const _at = email.indexOf("@");
+    if (email.length > 254 || _at < 1 || _at === email.length - 1 || email.lastIndexOf(".") <= _at)
+      return res.status(400).json({ error: "invalid email" });
+  }
   if (!["admin", "user"].includes(role))
     return res.status(400).json({ error: "invalid role: must be admin|user" });
 

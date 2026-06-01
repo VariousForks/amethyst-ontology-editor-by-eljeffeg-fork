@@ -718,6 +718,8 @@ export async function setOntologyImported(id, isImported) {
 // desired display order.  Branches are untouched — they always render under
 // their parent regardless of sort_order.
 export async function reorderOntologiesForProject(projectId, orderedIds) {
+  if (!Array.isArray(orderedIds) || orderedIds.length > 500)
+    throw new Error("orderedIds exceeds maximum length");
   const db = getDb();
   await db.transaction(async (tx) => {
     for (let i = 0; i < orderedIds.length; i++) {

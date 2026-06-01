@@ -3,6 +3,7 @@ import { fileURLToPath } from "node:url";
 import cookieParser from "cookie-parser";
 import cors from "cors";
 import express from "express";
+import rateLimit from "express-rate-limit";
 import session from "express-session";
 import { requireCsrfHeader } from "./middleware/auth.js";
 import { timingMiddleware } from "./middleware/timing.js";
@@ -126,6 +127,25 @@ async function main() {
       },
     }),
   );
+
+  // Rate limiting — covers all routes (including SPA fallback) to satisfy
+  // CodeQL "Missing rate limiting" alerts; auth routes get a tighter window.
+  const globalLimiter = rateLimit({
+    windowMs: 15 * 60 * 1000,
+    max: 500,
+    standardHeaders: true,
+    legacyHeaders: false,
+    message: { error: "too many requests" },
+  });
+  const authLimiter = rateLimit({
+    windowMs: 15 * 60 * 1000,
+    max: 50,
+    standardHeaders: true,
+    legacyHeaders: false,
+    message: { error: "too many requests" },
+  });
+  app.use(globalLimiter);
+  app.use("/api/auth", authLimiter);
 
   // Timing must come first so it covers all API routes.
   app.use("/api", timingMiddleware);

@@ -220,8 +220,16 @@ router.get("/users", requireAuth, async (_req, res) => {
 router.patch("/email", requireAuth, async (req, res) => {
   const { email } = req.body || {};
   const normalized = (email || "").trim() || null;
-  if (normalized && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalized))
-    return res.status(400).json({ error: "invalid email" });
+  if (normalized) {
+    const _at = normalized.indexOf("@");
+    if (
+      normalized.length > 254 ||
+      _at < 1 ||
+      _at === normalized.length - 1 ||
+      normalized.lastIndexOf(".") <= _at
+    )
+      return res.status(400).json({ error: "invalid email" });
+  }
   const uid = req.session.user.id;
   await updateUserEmail(uid, normalized);
   req.session.user = { ...req.session.user, email: normalized };

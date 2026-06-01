@@ -1719,7 +1719,9 @@ router.get(
           } catch (_err) {
             // Best-effort — degrade gracefully.
             console.warn(
-              `[linked-context] reverse-ref query failed for search=${searchId}:`,
+              `[linked-context] reverse-ref query failed for search=${String(searchId)
+                .replace(/[\r\n]/g, " ")
+                .slice(0, 80)}:`,
               _err?.message || _err,
             );
           }
@@ -2059,7 +2061,12 @@ router.get(
           }
         }
       } catch (err) {
-        console.warn(`[linked-context] error querying ${searchId}:`, err.message);
+        console.warn(
+          `[linked-context] error querying ${String(searchId)
+            .replace(/[\r\n]/g, " ")
+            .slice(0, 80)}:`,
+          err.message,
+        );
       }
     }
 
@@ -2077,7 +2084,12 @@ router.get(
         // The named graph / searchId is often the ontology IRI itself.
         // Also check onto.iri if available. Strip trailing '#' or '/' for
         // consistent prefix matching.
-        const candidates = [onto.iri, searchId].filter(Boolean).map((s) => s.replace(/[#/]+$/, ""));
+        const candidates = [onto.iri, searchId].filter(Boolean).map((s) => {
+          // Avoid ReDoS: strip trailing '#'/'/' without backtracking regex
+          let end = s.length;
+          while (end > 0 && (s[end - 1] === "#" || s[end - 1] === "/")) end--;
+          return end < s.length ? s.slice(0, end) : s;
+        });
         return [searchId, candidates];
       }),
     );

@@ -185,7 +185,7 @@ function atomsToTurtle(atoms, prefix) {
  *  Returns { listTurtle (the head node reference), extraTurtle (triple block) }. */
 function buildRdfList(nodes, prefix) {
   if (!nodes || nodes.length === 0) return { listTurtle: "rdf:nil", extraTurtle: "" };
-
+  if (nodes.length > 500) throw new Error("rule atom list exceeds maximum length");
   const triples = [];
   for (let i = 0; i < nodes.length; i++) {
     const cell = `_:${prefix}_cell_${i}`;

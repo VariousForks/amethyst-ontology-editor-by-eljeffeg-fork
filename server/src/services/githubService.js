@@ -17,6 +17,10 @@ const GITHUB_API = "https://api.github.com";
 const GITHUB_GRAPHQL = "https://api.github.com/graphql";
 
 async function ghFetch(token, method, path, body) {
+  // Prevent path-based SSRF: the path must be a relative GitHub API path.
+  if (typeof path !== "string" || !path.startsWith("/")) {
+    throw new Error(`[github] invalid API path: ${String(path).slice(0, 80)}`);
+  }
   const headers = {
     Authorization: `Bearer ${token}`,
     Accept: "application/vnd.github+json",

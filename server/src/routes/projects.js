@@ -277,8 +277,16 @@ router.post(
   async (req, res) => {
     const { email: rawEmail, projectRole = "editor" } = req.body || {};
     const email = rawEmail ? String(rawEmail).trim() : null;
-    if (email && !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email))
-      return res.status(400).json({ error: "invalid email" });
+    if (email) {
+      const _at = email.indexOf("@");
+      if (
+        email.length > 254 ||
+        _at < 1 ||
+        _at === email.length - 1 ||
+        email.lastIndexOf(".") <= _at
+      )
+        return res.status(400).json({ error: "invalid email" });
+    }
     if (!["manager", "editor", "viewer"].includes(projectRole))
       return res.status(400).json({ error: "projectRole must be manager|editor|viewer" });
 

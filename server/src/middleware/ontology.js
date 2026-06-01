@@ -82,19 +82,24 @@ export function invalidateDbCache({ projectId, ontologyId } = {}) {
 
 // ── Middleware ───────────────────────────────────────────────────────────────
 
+// Coerce a query/param value to a single string (guards against array injection
+// where ?ontology=a&ontology=b would produce an array in Express).
+function toSingleString(v) {
+  if (v == null) return null;
+  const s = Array.isArray(v) ? String(v[0] ?? "") : String(v);
+  return s || null;
+}
+
 export async function resolveOntology(req, res, next) {
-  const rawOnto =
-    req.params?.ontology ||
-    req.query?.ontology ||
-    req.headers["x-ontology-id"] ||
-    req.body?.ontology ||
-    null;
-  const rawProj =
-    req.params?.project ||
-    req.query?.project ||
-    req.headers["x-project-id"] ||
-    req.body?.project ||
-    null;
+  const rawOnto = toSingleString(
+    req.params?.ontology ??
+      req.query?.ontology ??
+      req.headers["x-ontology-id"] ??
+      req.body?.ontology,
+  );
+  const rawProj = toSingleString(
+    req.params?.project ?? req.query?.project ?? req.headers["x-project-id"] ?? req.body?.project,
+  );
 
   let project = null;
   if (rawProj) {

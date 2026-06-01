@@ -163,8 +163,16 @@ router.post("/users", async (req, res) => {
   if (password.length < 6)
     return res.status(400).json({ error: "password must be at least 6 characters" });
   const normalizedEmail = (email || "").trim() || null;
-  if (normalizedEmail && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalizedEmail))
-    return res.status(400).json({ error: "invalid email" });
+  if (normalizedEmail) {
+    const _at = normalizedEmail.indexOf("@");
+    if (
+      normalizedEmail.length > 254 ||
+      _at < 1 ||
+      _at === normalizedEmail.length - 1 ||
+      normalizedEmail.lastIndexOf(".") <= _at
+    )
+      return res.status(400).json({ error: "invalid email" });
+  }
   const effectiveRole = role || "user";
   if (!["admin", "user"].includes(effectiveRole))
     return res.status(400).json({ error: "role must be admin|user" });
