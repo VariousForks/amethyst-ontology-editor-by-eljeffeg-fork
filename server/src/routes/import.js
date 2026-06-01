@@ -73,7 +73,12 @@ function validateFetchUrl(url) {
     /^127\./,
     /^0\.0\.0\.0$/,
     /^::1$/,
+    /^::$/,
     /^0:0:0:0:0:0:0:1$/,
+    /^0:0:0:0:0:0:0:0$/,
+    // IPv4-mapped IPv6 (e.g. ::ffff:127.0.0.1)
+    /^::ffff:/i,
+    /^0:0:0:0:0:ffff:/i,
     // Link-local / cloud metadata
     /^169\.254\./,
     /^fe80:/i,
@@ -82,6 +87,8 @@ function validateFetchUrl(url) {
     /^10\./,
     /^172\.(1[6-9]|2[0-9]|3[01])\./,
     /^192\.168\./,
+    // IPv6 unique local (fc00::/7 — equivalent of RFC1918)
+    /^f[cd][0-9a-f]{0,2}:/i,
     // mDNS
     /\.local$/,
   ];

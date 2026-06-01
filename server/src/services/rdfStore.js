@@ -85,7 +85,13 @@ export function graphIrisFor(ontologyIds) {
   return ids.filter(Boolean).map(graphIriFor);
 }
 
+// Only UUID-shaped IDs are valid ontology identifiers.
+const ONTOLOGY_ID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 export function graphFileFor(ontologyId) {
+  if (!ONTOLOGY_ID_RE.test(String(ontologyId))) {
+    throw new Error(`[rdfStore] invalid ontology ID`);
+  }
   return path.join(ONTO_DIR, `${ontologyId}.ttl`);
 }
 
@@ -325,7 +331,7 @@ export async function persistOntology(ontologyId) {
       } catch {}
       if (existing) {
         console.warn(
-          `[rdfStore] persist(${ontologyId}): store has 0 quads but file is non-empty — ` +
+          `[rdfStore] persist(${String(ontologyId).replace(/[\r\n%]/g, " ").slice(0, 80)}): store has 0 quads but file is non-empty — ` +
             "skipping overwrite to protect existing data.",
         );
         return;
@@ -364,21 +370,22 @@ export async function flushToDisk() {
 
         const isBranch = !!record?.branch_of;
         const filePath = isBranch ? getBranchFilePath(id, record.branch_of) : graphFileFor(id);
+        const safeFilePath = assertSafePath(filePath);
 
-        const dir = path.dirname(filePath);
+        const dir = path.dirname(safeFilePath);
         await fs.promises.mkdir(dir, { recursive: true });
 
         // Only write if content changed to avoid unnecessary disk I/O.
         let existing = "";
         try {
-          existing = await fs.promises.readFile(filePath, "utf-8");
+          existing = await fs.promises.readFile(safeFilePath, "utf-8");
         } catch {}
         if (existing !== text) {
-          await fs.promises.writeFile(filePath, text, "utf-8");
+          await fs.promises.writeFile(safeFilePath, text, "utf-8");
           console.log(`[rdfStore] flushed "${record?.name || id}" to disk`);
         }
       } catch (err) {
-        console.warn(`[rdfStore] flushToDisk(${id}) failed:`, err.message);
+        console.warn(`[rdfStore] flushToDisk(${String(id).replace(/[\r\n%]/g, " ").slice(0, 80)}) failed:`, err.message);
       }
     }),
   );
@@ -411,7 +418,7 @@ export async function writeFileToDisk(ontologyId) {
       } catch {}
       if (existing) {
         console.warn(
-          `[rdfStore] writeFileToDisk(${ontologyId}): store has 0 quads but file is non-empty — skipping.`,
+          `[rdfStore] writeFileToDisk(${String(ontologyId).replace(/[\r\n%]/g, " ").slice(0, 80)}): store has 0 quads but file is non-empty — skipping.`,
         );
         return;
       }
