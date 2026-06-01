@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { flushSync } from "react-dom";
 import { api } from "../lib/api.js";
 import { useProject } from "./OntologyPicker.jsx";
 
@@ -57,10 +58,12 @@ export default function ImportView({ onChange }) {
       );
       return;
     }
-    setErr(null);
-    setOk(null);
-    setWarnings([]);
-    setBusy(true);
+    flushSync(() => {
+      setErr(null);
+      setOk(null);
+      setWarnings([]);
+      setBusy(true);
+    });
     try {
       const opts = {
         mode,
@@ -301,11 +304,62 @@ export default function ImportView({ onChange }) {
                 ))}
               </div>
             )}
+            {busy && (
+              <div className="flex items-center gap-2 text-sm text-slate-400">
+                <svg
+                  aria-hidden="true"
+                  className="animate-spin h-4 w-4 text-brand-400 shrink-0"
+                  xmlns="http://www.w3.org/2000/svg"
+                  fill="none"
+                  viewBox="0 0 24 24"
+                >
+                  <circle
+                    className="opacity-25"
+                    cx="12"
+                    cy="12"
+                    r="10"
+                    stroke="currentColor"
+                    strokeWidth="4"
+                  />
+                  <path
+                    className="opacity-75"
+                    fill="currentColor"
+                    d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"
+                  />
+                </svg>
+                {source === "url"
+                  ? "Fetching URL and resolving owl:imports — this may take a moment…"
+                  : "Loading RDF data…"}
+              </div>
+            )}
             <button
               type="submit"
-              className="btn-primary"
+              className="btn-primary flex items-center gap-2"
               disabled={busy || (mode === "existing" && !canImportExisting)}
             >
+              {busy && (
+                <svg
+                  aria-hidden="true"
+                  className="animate-spin h-4 w-4 shrink-0"
+                  xmlns="http://www.w3.org/2000/svg"
+                  fill="none"
+                  viewBox="0 0 24 24"
+                >
+                  <circle
+                    className="opacity-25"
+                    cx="12"
+                    cy="12"
+                    r="10"
+                    stroke="currentColor"
+                    strokeWidth="4"
+                  />
+                  <path
+                    className="opacity-75"
+                    fill="currentColor"
+                    d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"
+                  />
+                </svg>
+              )}
               {busy ? "Importing…" : buttonLabel(mode)}
             </button>
           </form>
