@@ -476,10 +476,18 @@ router.post(
             .replace(/\.(ttl|owl|rdf|n3|jsonld|nt|nq|trig)$/i, "");
           const format = detectFormat(file.path, null);
 
+          // Construct the raw GitHub URL so the RDF parser can resolve relative
+          // IRIs (e.g. owl:imports <../other.ttl>) against the file's location.
+          const rawGitHubUrl = `https://raw.githubusercontent.com/${owner}/${repo}/${branch}/${file.path}`;
+
           let ontologyId;
           if (existingOntology) {
             ontologyId = existingOntology.id;
-            loadOntologyFromText(ontologyId, content, { replace: true, format });
+            await loadOntologyFromText(ontologyId, content, {
+              replace: true,
+              format,
+              baseIri: rawGitHubUrl,
+            });
             await updateOntologyGitHubSync(ontologyId, {
               githubPath: file.path,
               githubSha: sha,
@@ -498,7 +506,19 @@ router.post(
               now,
               userId: req.session.user.id,
             });
-            loadOntologyFromText(ontologyId, content, { replace: false, format });
+            try {
+              await loadOntologyFromText(ontologyId, content, {
+                replace: false,
+                format,
+                baseIri: rawGitHubUrl,
+              });
+            } catch (loadErr) {
+              // Roll back the orphan DB record so next sync can retry cleanly.
+              try {
+                await getDb().run("DELETE FROM ontologies WHERE id = ?", [ontologyId]);
+              } catch {}
+              throw loadErr;
+            }
             await updateOntologyGitHubSync(ontologyId, {
               githubPath: file.path,
               githubSha: sha,
@@ -553,6 +573,7 @@ router.post(
             errors.push({ path: f.iri, error: f.error });
           }
         } catch (err) {
+          console.warn(`[github-sync] skipping ${file.path}: ${err.message}`);
           errors.push({ path: file.path, error: err.message });
         }
       }

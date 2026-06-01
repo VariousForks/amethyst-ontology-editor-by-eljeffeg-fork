@@ -15,9 +15,11 @@ const _workerUrl = new URL("./rdfLoadWorker.js", import.meta.url);
  * Offloads the slow synchronous Oxigraph parse (Turtle/RDF-XML/JSON-LD) so the
  * main event loop stays responsive while large ontologies are loaded.
  */
-export function loadRdfTextInWorker(text, format, graphIri) {
+export function loadRdfTextInWorker(text, format, graphIri, baseIri) {
   return new Promise((resolve, reject) => {
-    const worker = new Worker(_workerUrl, { workerData: { text, format, graphIri } });
+    const worker = new Worker(_workerUrl, {
+      workerData: { text, format, graphIri, baseIri: baseIri || null },
+    });
     worker.once("message", ({ ok, nquads, error }) => {
       worker.terminate().catch(() => {});
       if (!ok) return reject(new Error(error));
@@ -479,7 +481,11 @@ export async function reloadOntologyFromDisk(ontologyId) {
 // Load ontology content from a raw Turtle/RDF string into the named graph.
 // Used by GitHub sync to import file content fetched from the API.
 // Pass { replace: true } to clear the existing graph first.
-export async function loadOntologyFromText(ontologyId, text, { replace = false, format = FORMAT } = {}) {
+export async function loadOntologyFromText(
+  ontologyId,
+  text,
+  { replace = false, format = FORMAT, baseIri = null } = {},
+) {
   if (!store) throw new Error("rdfStore not initialized");
   const g = graphIriFor(ontologyId);
   const gNode = namedNode(g);
@@ -489,7 +495,7 @@ export async function loadOntologyFromText(ontologyId, text, { replace = false, 
     } catch {}
   }
   const normalized = normalizeRdfNamespaces(text);
-  const nquads = await loadRdfTextInWorker(normalized, format, g);
+  const nquads = await loadRdfTextInWorker(normalized, format, g, baseIri);
   store.load(nquads, { format: "application/n-quads", to_graph_name: gNode });
   trackedOntologyIds.add(ontologyId);
   schedulePersist(ontologyId, 2000);

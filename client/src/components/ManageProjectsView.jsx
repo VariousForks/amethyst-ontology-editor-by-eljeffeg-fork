@@ -40,6 +40,7 @@ export default function ManageProjectsView({ onOntologiesChanged }) {
   const scrollRef = useRef(null);
 
   const [showNewProject, setShowNewProject] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
   const [flash, setFlash] = useState(null);
   // ID of a newly created project to switch to once it appears in the list.
   const [pendingProjectSwitch, setPendingProjectSwitch] = useState(null);
@@ -111,17 +112,48 @@ export default function ManageProjectsView({ onOntologiesChanged }) {
 
   const handleRefresh = async () => {
     const savedScroll = scrollRef.current?.scrollTop ?? 0;
-    await refresh();
-    onOntologiesChanged?.();
-    requestAnimationFrame(() => {
-      if (scrollRef.current) scrollRef.current.scrollTop = savedScroll;
-    });
+    setRefreshing(true);
+    try {
+      await refresh();
+      onOntologiesChanged?.();
+    } finally {
+      setRefreshing(false);
+      requestAnimationFrame(() => {
+        if (scrollRef.current) scrollRef.current.scrollTop = savedScroll;
+      });
+    }
   };
 
   return (
     <div ref={scrollRef} className="flex-1 flex flex-col min-h-0 overflow-auto">
       <div className="border-b border-ink-700 bg-ink-900/70 px-5 py-3 flex items-center gap-3">
         <h1 className="text-base font-semibold flex-1">Manage Projects</h1>
+        {refreshing && (
+          <span className="flex items-center gap-1.5 text-xs text-slate-400">
+            <svg
+              aria-hidden="true"
+              className="animate-spin h-3.5 w-3.5 text-brand-400 shrink-0"
+              xmlns="http://www.w3.org/2000/svg"
+              fill="none"
+              viewBox="0 0 24 24"
+            >
+              <circle
+                className="opacity-25"
+                cx="12"
+                cy="12"
+                r="10"
+                stroke="currentColor"
+                strokeWidth="4"
+              />
+              <path
+                className="opacity-75"
+                fill="currentColor"
+                d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"
+              />
+            </svg>
+            Loading…
+          </span>
+        )}
         <button
           type="button"
           className="btn-primary text-xs"
@@ -174,7 +206,10 @@ export default function ManageProjectsView({ onOntologiesChanged }) {
             // Queue the switch; the useEffect above will call switchProject
             // once handleRefresh() has committed the new project to context state.
             const newId = r?.project?.id;
-            if (newId) setPendingProjectSwitch(newId);
+            if (newId) {
+              setPendingProjectSwitch(newId);
+              setExpandedProjects((prev) => new Set([...prev, String(newId)]));
+            }
             await handleRefresh();
           }}
         />
@@ -229,10 +264,13 @@ function ProjectCard({
     try {
       const result = await api.syncProjectFromGitHub(project.id);
       const n = result.synced ?? 0;
+      const errCount = result.errors?.length ?? 0;
       onFlash(
         n > 0
-          ? `Synced ${n} file${n !== 1 ? "s" : ""} from ${project.github_repo}.`
-          : `All files up to date from ${project.github_repo}.`,
+          ? `Synced ${n} file${n !== 1 ? "s" : ""} from ${project.github_repo}${errCount ? ` (${errCount} error${errCount !== 1 ? "s" : ""})` : ""}.`
+          : errCount > 0
+            ? `Sync found 0 files — ${errCount} error${errCount !== 1 ? "s" : ""}: ${result.errors[0].error}`
+            : `All files up to date from ${project.github_repo}.`,
       );
       await onRefresh();
     } catch (e) {

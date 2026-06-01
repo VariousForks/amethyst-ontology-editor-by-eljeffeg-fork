@@ -202,10 +202,13 @@ export async function listOntologyFiles(token, owner, repo, branch = "HEAD") {
 }
 
 export async function fetchFileContent(token, owner, repo, filePath, ref = "HEAD") {
+  // Encode each path segment individually — encodeURIComponent on the whole
+  // path would turn slashes into %2F, causing 404 for any subdirectory file.
+  const encodedPath = filePath.split("/").map(encodeURIComponent).join("/");
   const data = await ghFetch(
     token,
     "GET",
-    `/repos/${owner}/${repo}/contents/${encodeURIComponent(filePath)}?ref=${ref}`,
+    `/repos/${owner}/${repo}/contents/${encodedPath}?ref=${ref}`,
   );
   const content = Buffer.from(data.content, "base64").toString("utf-8");
   return { content, sha: data.sha };

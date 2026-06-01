@@ -24,7 +24,7 @@ import {
   useRef,
   useState,
 } from "react";
-import { createPortal } from "react-dom";
+import { createPortal, flushSync } from "react-dom";
 import { NavLink } from "react-router-dom";
 import { useAuth } from "../App.jsx";
 import {
@@ -1276,7 +1276,8 @@ export function NewProjectModal({ onClose, onCreated }) {
   const [file, setFile] = useState(null);
   const [url, setUrl] = useState("");
   const [githubRepo, setGithubRepo] = useState("");
-  const [githubBranch, setGithubBranch] = useState("");
+  const [githubBranch, _setGithubBranch] = useState("");
+  const [fetchImports, setFetchImports] = useState(true);
   const [err, setErr] = useState(null);
   const [busy, setBusy] = useState(false);
 
@@ -1292,17 +1293,29 @@ export function NewProjectModal({ onClose, onCreated }) {
     setIri(`http://example.org/${toKebabCase(nameForIri)}`);
   }, [ontologyName, name, iriUserEdited, defaultIri]);
 
+  // Spinner message shown below the form while busy (blank mode is fast, skip it).
+  const busyMsg =
+    mode === "github"
+      ? "Creating project and syncing from GitHub…"
+      : source === "url"
+        ? "Fetching URL and resolving owl:imports — this may take a moment…"
+        : mode === "import"
+          ? "Loading RDF data — large files may take a minute…"
+          : null;
+
   const submit = async (e) => {
     e.preventDefault();
     if (!name.trim()) {
       setErr("Project name is required");
       return;
     }
-    setBusy(true);
-    setErr(null);
+    flushSync(() => {
+      setErr(null);
+      setBusy(true);
+    });
     try {
       if (mode === "github") {
-        const repoVal = githubRepo.trim();
+        const repoVal = githubRepo.trim().replace(/\/$/, "");
         if (!repoVal) {
           setErr("GitHub repository is required (owner/repo)");
           setBusy(false);
@@ -1331,7 +1344,16 @@ export function NewProjectModal({ onClose, onCreated }) {
         });
         // 3. Sync files from the repo
         try {
-          await api.syncProjectFromGitHub(pid);
+          const syncResult = await api.syncProjectFromGitHub(pid);
+          if (syncResult.synced === 0 && syncResult.errors?.length > 0) {
+            const e0 = syncResult.errors[0].error;
+            setErr(
+              `Project created but sync found 0 files (${syncResult.errors.length} error${syncResult.errors.length !== 1 ? "s" : ""}: ${e0}). Retry sync from the project card.`,
+            );
+            setBusy(false);
+            onCreated?.(created);
+            return;
+          }
         } catch (e) {
           setErr(
             `Project created but sync failed: ${e.message}. Retry sync from the project card.`,
@@ -1365,6 +1387,7 @@ export function NewProjectModal({ onClose, onCreated }) {
           mode: "new-project",
           name: name.trim(),
           description: description.trim() || null,
+          fetchImports,
         });
         onCreated?.(r);
       } else {
@@ -1377,6 +1400,7 @@ export function NewProjectModal({ onClose, onCreated }) {
           mode: "new-project",
           name: name.trim(),
           description: description.trim() || null,
+          fetchImports,
         });
         onCreated?.(r);
       }
@@ -1489,10 +1513,6 @@ export function NewProjectModal({ onClose, onCreated }) {
                   accept=".ttl,.nt,.nq,.trig,.rdf,.xml,.jsonld,.json,.n3"
                   onChange={(e) => setFile(e.target.files?.[0] || null)}
                 />
-                <span className="text-xs text-slate-400 mt-1 block">
-                  Any <code className="font-mono">owl:imports</code> declared in the file will be
-                  fetched and added as separate ontologies.
-                </span>
               </label>
             ) : (
               <label className="block">
@@ -1505,27 +1525,23 @@ export function NewProjectModal({ onClose, onCreated }) {
                   placeholder="https://example.org/ontology.ttl"
                   spellCheck={false}
                 />
-                <span className="text-xs text-slate-400 mt-1 block">
-                  The server will fetch the URL and also pull in any{" "}
-                  <code className="font-mono">owl:imports</code> as separate ontologies.
-                </span>
               </label>
             )}
+            <label className="flex items-center gap-2 text-sm">
+              <input
+                type="checkbox"
+                checked={fetchImports}
+                onChange={(e) => setFetchImports(e.target.checked)}
+              />
+              <span className="text-slate-400">
+                Fetch <code className="font-mono text-xs">owl:imports</code> as separate ontologies
+              </span>
+            </label>
           </>
         )}
 
         {mode === "github" && (
           <div className="space-y-3">
-            {!githubConnection && (
-              <div className="flex items-center gap-2 rounded-md border border-amber-500/30 bg-amber-950/20 px-3 py-2.5 text-xs text-amber-200">
-                <GitBranch size={12} aria-hidden="true" />
-                Connect your GitHub account in{" "}
-                <a href="/settings#github" className="underline">
-                  Settings
-                </a>{" "}
-                to sync ontology files.
-              </div>
-            )}
             <label className="block">
               <span className="label">
                 GitHub Repository <span className="text-slate-500">(owner/repo)</span>
@@ -1541,27 +1557,84 @@ export function NewProjectModal({ onClose, onCreated }) {
                 required
               />
             </label>
-            <label className="block">
-              <span className="label">
-                Branch <span className="text-slate-500">(optional, defaults to repo default)</span>
-              </span>
-              <input
-                className="input"
-                placeholder="main"
-                value={githubBranch}
-                onChange={(e) => setGithubBranch(e.target.value)}
-              />
-            </label>
+            {!githubConnection && (
+              <div className="flex items-center gap-2 rounded-md border border-amber-500/30 bg-amber-950/20 px-3 py-2.5 text-xs text-amber-200">
+                <GitBranch size={12} aria-hidden="true" />
+                Connect your GitHub account in{" "}
+                <a href="/settings#github" className="underline">
+                  Settings
+                </a>{" "}
+                to sync ontology files.
+              </div>
+            )}
           </div>
         )}
 
         {err && <div className="text-sm text-red-300">{err}</div>}
+        {busy && busyMsg && (
+          <div className="flex items-center gap-2 text-sm text-slate-400">
+            <svg
+              aria-hidden="true"
+              className="animate-spin h-4 w-4 text-brand-400 shrink-0"
+              xmlns="http://www.w3.org/2000/svg"
+              fill="none"
+              viewBox="0 0 24 24"
+            >
+              <circle
+                className="opacity-25"
+                cx="12"
+                cy="12"
+                r="10"
+                stroke="currentColor"
+                strokeWidth="4"
+              />
+              <path
+                className="opacity-75"
+                fill="currentColor"
+                d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"
+              />
+            </svg>
+            {busyMsg}
+          </div>
+        )}
         <div className="flex justify-end gap-2 pt-2">
-          <button type="button" className="btn-ghost" onClick={onClose}>
+          <button type="button" className="btn-ghost" onClick={onClose} disabled={busy}>
             Cancel
           </button>
-          <button type="submit" className="btn-primary" disabled={busy}>
-            {busy ? "…" : "Create project"}
+          <button
+            type="submit"
+            className="btn-primary flex items-center gap-2"
+            disabled={busy || (mode === "github" && !githubConnection)}
+            title={
+              mode === "github" && !githubConnection
+                ? "Connect your GitHub account in Settings first"
+                : undefined
+            }
+          >
+            {busy && (
+              <svg
+                aria-hidden="true"
+                className="animate-spin h-4 w-4 shrink-0"
+                xmlns="http://www.w3.org/2000/svg"
+                fill="none"
+                viewBox="0 0 24 24"
+              >
+                <circle
+                  className="opacity-25"
+                  cx="12"
+                  cy="12"
+                  r="10"
+                  stroke="currentColor"
+                  strokeWidth="4"
+                />
+                <path
+                  className="opacity-75"
+                  fill="currentColor"
+                  d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"
+                />
+              </svg>
+            )}
+            {busy ? "Creating…" : "Create project"}
           </button>
         </div>
       </form>
@@ -1580,6 +1653,7 @@ export function NewOntologyModal({ onClose, onCreated, projectId, projectName })
   const [description, setDescription] = useState("");
   const [file, setFile] = useState(null);
   const [url, setUrl] = useState("");
+  const [fetchImports, setFetchImports] = useState(true);
   const [err, setErr] = useState(null);
   const [busy, setBusy] = useState(false);
 
@@ -1594,10 +1668,19 @@ export function NewOntologyModal({ onClose, onCreated, projectId, projectName })
     setIri(`http://example.org/${toKebabCase(name.trim())}`);
   }, [name, iriUserEdited, defaultIri]);
 
+  const busyMsg =
+    source === "url"
+      ? "Fetching URL and resolving owl:imports — this may take a moment…"
+      : mode === "import"
+        ? "Loading RDF data — large files may take a minute…"
+        : null;
+
   const submit = async (e) => {
     e.preventDefault();
-    setBusy(true);
-    setErr(null);
+    flushSync(() => {
+      setErr(null);
+      setBusy(true);
+    });
     try {
       if (mode === "blank") {
         if (!name.trim()) {
@@ -1624,6 +1707,7 @@ export function NewOntologyModal({ onClose, onCreated, projectId, projectName })
           projectId: projectId || getCurrentProject(),
           name: name.trim() || undefined,
           description: description.trim() || undefined,
+          fetchImports,
         });
         onCreated?.(r);
       } else {
@@ -1637,6 +1721,7 @@ export function NewOntologyModal({ onClose, onCreated, projectId, projectName })
           projectId: projectId || getCurrentProject(),
           name: name.trim() || undefined,
           description: description.trim() || undefined,
+          fetchImports,
         });
         onCreated?.(r);
       }
@@ -1738,10 +1823,6 @@ export function NewOntologyModal({ onClose, onCreated, projectId, projectName })
                   accept=".ttl,.nt,.nq,.trig,.rdf,.xml,.jsonld,.json,.n3"
                   onChange={(e) => setFile(e.target.files?.[0] || null)}
                 />
-                <span className="text-xs text-slate-400 mt-1 block">
-                  Any <code className="font-mono">owl:imports</code> declared in the file will be
-                  fetched and added as separate ontologies.
-                </span>
               </label>
             ) : (
               <label className="block">
@@ -1754,22 +1835,77 @@ export function NewOntologyModal({ onClose, onCreated, projectId, projectName })
                   placeholder="https://example.org/ontology.ttl"
                   spellCheck={false}
                 />
-                <span className="text-xs text-slate-400 mt-1 block">
-                  The server will fetch the URL and also pull in any{" "}
-                  <code className="font-mono">owl:imports</code> as separate ontologies.
-                </span>
               </label>
             )}
+            <label className="flex items-center gap-2 text-sm">
+              <input
+                type="checkbox"
+                checked={fetchImports}
+                onChange={(e) => setFetchImports(e.target.checked)}
+              />
+              <span className="text-slate-400">
+                Fetch <code className="font-mono text-xs">owl:imports</code> as separate ontologies
+              </span>
+            </label>
           </>
         )}
 
         {err && <div className="text-sm text-red-300">{err}</div>}
+        {busy && busyMsg && (
+          <div className="flex items-center gap-2 text-sm text-slate-400">
+            <svg
+              aria-hidden="true"
+              className="animate-spin h-4 w-4 text-brand-400 shrink-0"
+              xmlns="http://www.w3.org/2000/svg"
+              fill="none"
+              viewBox="0 0 24 24"
+            >
+              <circle
+                className="opacity-25"
+                cx="12"
+                cy="12"
+                r="10"
+                stroke="currentColor"
+                strokeWidth="4"
+              />
+              <path
+                className="opacity-75"
+                fill="currentColor"
+                d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"
+              />
+            </svg>
+            {busyMsg}
+          </div>
+        )}
         <div className="flex justify-end gap-2 pt-2">
-          <button type="button" className="btn-ghost" onClick={onClose}>
+          <button type="button" className="btn-ghost" onClick={onClose} disabled={busy}>
             Cancel
           </button>
-          <button type="submit" className="btn-primary" disabled={busy}>
-            {busy ? "…" : "Add ontology"}
+          <button type="submit" className="btn-primary flex items-center gap-2" disabled={busy}>
+            {busy && (
+              <svg
+                aria-hidden="true"
+                className="animate-spin h-4 w-4 shrink-0"
+                xmlns="http://www.w3.org/2000/svg"
+                fill="none"
+                viewBox="0 0 24 24"
+              >
+                <circle
+                  className="opacity-25"
+                  cx="12"
+                  cy="12"
+                  r="10"
+                  stroke="currentColor"
+                  strokeWidth="4"
+                />
+                <path
+                  className="opacity-75"
+                  fill="currentColor"
+                  d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"
+                />
+              </svg>
+            )}
+            {busy ? "Adding…" : "Add ontology"}
           </button>
         </div>
       </form>

@@ -1,10 +1,14 @@
-import { workerData, parentPort } from "node:worker_threads";
+import { parentPort, workerData } from "node:worker_threads";
 import oxigraph from "oxigraph";
 
-const { text, format, graphIri } = workerData;
+const { text, format, graphIri, baseIri } = workerData;
 try {
   const store = new oxigraph.Store();
-  store.load(text, { format, to_graph_name: oxigraph.namedNode(graphIri) });
+  store.load(text, {
+    format,
+    to_graph_name: oxigraph.namedNode(graphIri),
+    base_iri: baseIri || undefined,
+  });
   const nquads = store.dump({
     format: "application/n-quads",
     from_graph_name: oxigraph.namedNode(graphIri),

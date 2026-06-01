@@ -27,6 +27,7 @@ export default function ImportView({ onChange }) {
   const [ok, setOk] = useState(null);
   const [warnings, setWarnings] = useState([]);
   const [format, setFormat] = useState("text/turtle");
+  const [fetchImports, setFetchImports] = useState(true);
 
   const canImportExisting = !unionMode && !!currentOntology;
 
@@ -70,6 +71,7 @@ export default function ImportView({ onChange }) {
         replace: mode === "existing" ? replace : false,
         name: name || undefined,
         description: description || undefined,
+        fetchImports,
       };
 
       const r =
@@ -189,23 +191,20 @@ export default function ImportView({ onChange }) {
               <code className="font-mono text-xs bg-ink-800 px-1.5 py-0.5 rounded-sm ml-1">
                 .jsonld
               </code>
-              . Any{" "}
-              <code className="font-mono text-xs bg-ink-800 px-1.5 py-0.5 rounded-sm">
-                owl:imports
-              </code>{" "}
-              declared in the file will be fetched from the web and added as separate ontologies.
+              .
             </p>
           )}
 
-          {source === "url" && (
-            <p className="text-sm text-slate-400">
-              The server will fetch the URL and automatically pull in any{" "}
-              <code className="font-mono text-xs bg-ink-800 px-1.5 py-0.5 rounded-sm">
-                owl:imports
-              </code>{" "}
-              declared in the ontology, each as a separate ontology.
-            </p>
-          )}
+          <label className="flex items-center gap-2 text-sm">
+            <input
+              type="checkbox"
+              checked={fetchImports}
+              onChange={(e) => setFetchImports(e.target.checked)}
+            />
+            <span className="text-slate-400">
+              Fetch <code className="font-mono text-xs">owl:imports</code> as separate ontologies
+            </span>
+          </label>
 
           <form onSubmit={submit} className="space-y-3">
             {source === "file" ? (

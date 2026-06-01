@@ -198,6 +198,7 @@ async function loadUrlWithImportsAsSiblings(
   projectId,
   uid,
   visited = new Set(),
+  skipImports = false,
 ) {
   if (visited.has(url)) return { created: [], failed: [] };
   visited.add(url);
@@ -228,6 +229,7 @@ async function loadUrlWithImportsAsSiblings(
   const _nq1 = await loadRdfTextInWorker(normalizeRdfNamespaces(text), format, graphNode.value);
   store.load(_nq1, { format: "application/n-quads", to_graph_name: graphNode });
 
+  if (skipImports) return { created: [], failed: [] };
   return _createSiblingsForImports(store, graphNode, projectId, uid, visited);
 }
 
@@ -384,7 +386,9 @@ function readUpload(req) {
 // ── Import handlers (async to support URL fetching) ──────────────────────────
 
 async function importIntoExistingOntology(req, res) {
-  const replace = req.body?.replace === "true" || req.body?.replace === true;
+  const flag = (v) => v === "true" || v === true;
+  const replace = flag(req.body?.replace);
+  const skipImports = flag(req.body?.skip_imports);
   const uid = req.session.user.id;
   const oid = req.ontologyId;
   const g = graphIriFor(oid);
@@ -430,12 +434,9 @@ async function importIntoExistingOntology(req, res) {
       // Invalidate stale cached SPARQL results so the freshly-loaded data is
       // visible immediately to all subsequent reads (meta, classes, graph, etc.).
       cacheInvalidate(oid);
-      ({ created: siblings, failed: failedImports } = await resolveOwlImportsAsSiblings(
-        store,
-        gNode,
-        req.projectId,
-        uid,
-      ));
+      ({ created: siblings, failed: failedImports } = skipImports
+        ? { created: [], failed: [] }
+        : await resolveOwlImportsAsSiblings(store, gNode, req.projectId, uid));
     } else {
       const { text, format, filename: fn } = readUpload(req);
       filename = fn;
@@ -445,12 +446,9 @@ async function importIntoExistingOntology(req, res) {
       // Invalidate stale cached SPARQL results so the freshly-loaded data is
       // visible immediately to all subsequent reads (meta, classes, graph, etc.).
       cacheInvalidate(oid);
-      ({ created: siblings, failed: failedImports } = await resolveOwlImportsAsSiblings(
-        store,
-        gNode,
-        req.projectId,
-        uid,
-      ));
+      ({ created: siblings, failed: failedImports } = skipImports
+        ? { created: [], failed: [] }
+        : await resolveOwlImportsAsSiblings(store, gNode, req.projectId, uid));
     }
 
     const conflicts = validatePropertyTypeConflicts(oid);
@@ -514,6 +512,8 @@ async function importIntoExistingOntology(req, res) {
 async function importAsNewOntology(req, res) {
   if (!req.projectId) return res.status(400).json({ error: "project required" });
 
+  const flag = (v) => v === "true" || v === true;
+  const skipImports = flag(req.body?.skip_imports);
   const uid = req.session.user.id;
   const projectId = req.projectId;
   const now = Date.now();
@@ -527,7 +527,8 @@ async function importAsNewOntology(req, res) {
   if (req.body?.url) {
     const url = req.body.url.toString().trim();
     filename = stripIriTrailing(url.split("?")[0].split("/").pop() || "remote") || "remote";
-    loadFn = (store, gNode) => loadUrlWithImportsAsSiblings(url, store, gNode, projectId, uid);
+    loadFn = (store, gNode) =>
+      loadUrlWithImportsAsSiblings(url, store, gNode, projectId, uid, undefined, skipImports);
   } else {
     const { text, format, filename: fn } = readUpload(req);
     filename = fn;
@@ -535,6 +536,7 @@ async function importAsNewOntology(req, res) {
     loadFn = async (store, gNode) => {
       const _nq4 = await loadRdfTextInWorker(normalizeRdfNamespaces(text), format, gNode.value);
       store.load(_nq4, { format: "application/n-quads", to_graph_name: gNode });
+      if (skipImports) return { created: [], failed: [] };
       return resolveOwlImportsAsSiblings(store, gNode, projectId, uid);
     };
   }
@@ -630,6 +632,8 @@ async function importAsNewOntology(req, res) {
 }
 
 async function importAsNewProject(req, res) {
+  const flag = (v) => v === "true" || v === true;
+  const skipImports = flag(req.body?.skip_imports);
   const uid = req.session.user.id;
   const now = Date.now();
   const pid = uuid();
@@ -645,7 +649,7 @@ async function importAsNewProject(req, res) {
     const url = req.body.url.toString().trim();
     filename = stripIriTrailing(url.split("?")[0].split("/").pop() || "remote") || "remote";
     prepareLoad = (projectId) => (store, gNode) =>
-      loadUrlWithImportsAsSiblings(url, store, gNode, projectId, uid);
+      loadUrlWithImportsAsSiblings(url, store, gNode, projectId, uid, undefined, skipImports);
   } else {
     const { text, format, filename: fn } = readUpload(req);
     filename = fn;
@@ -653,6 +657,7 @@ async function importAsNewProject(req, res) {
     prepareLoad = (projectId) => async (store, gNode) => {
       const _nq5 = await loadRdfTextInWorker(normalizeRdfNamespaces(text), format, gNode.value);
       store.load(_nq5, { format: "application/n-quads", to_graph_name: gNode });
+      if (skipImports) return { created: [], failed: [] };
       return resolveOwlImportsAsSiblings(store, gNode, projectId, uid);
     };
   }

@@ -130,12 +130,17 @@ async function main() {
 
   // Rate limiting — covers all routes (including SPA fallback) to satisfy
   // CodeQL "Missing rate limiting" alerts; auth routes get a tighter window.
+  // /api/import is excluded from the global limiter: large file uploads and
+  // RDF parses are inherently slow and self-throttling — applying a per-request
+  // counter causes false 429s for 30+ MB files whose follow-up refresh calls
+  // push a session over the limit before the UI can show a spinner.
   const globalLimiter = rateLimit({
     windowMs: 15 * 60 * 1000,
-    max: 500,
+    max: 1000,
     standardHeaders: true,
     legacyHeaders: false,
     message: { error: "too many requests" },
+    skip: (req) => req.path.startsWith("/api/import"),
   });
   const authLimiter = rateLimit({
     windowMs: 15 * 60 * 1000,

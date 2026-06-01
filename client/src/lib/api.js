@@ -556,7 +556,10 @@ export const api = {
   //                    from the file (default name = filename or opts.name)
   //   'new-project' - create a brand new project containing one ontology
   //                   seeded from the file
-  importTtl: (file, { mode = "existing", replace = false, name, description, projectId } = {}) => {
+  importTtl: (
+    file,
+    { mode = "existing", replace = false, name, description, projectId, fetchImports = true } = {},
+  ) => {
     const fd = new FormData();
     fd.append("file", file);
     if (mode === "new-project") fd.append("new_project", "true");
@@ -564,6 +567,7 @@ export const api = {
     if (mode === "existing" && replace) fd.append("replace", "true");
     if (name) fd.append("name", name);
     if (description) fd.append("description", description);
+    if (!fetchImports) fd.append("skip_imports", "true");
 
     // New-project mode doesn't need any project context; for new-ontology we
     // need the target project id; existing mode uses the current scope.
@@ -590,7 +594,7 @@ export const api = {
   },
   importFromUrl: (
     url,
-    { mode = "existing", replace = false, name, description, projectId } = {},
+    { mode = "existing", replace = false, name, description, projectId, fetchImports = true } = {},
   ) => {
     const payload = { url };
     if (mode === "new-project") payload.new_project = true;
@@ -598,6 +602,7 @@ export const api = {
     if (mode === "existing" && replace) payload.replace = true;
     if (name) payload.name = name;
     if (description) payload.description = description;
+    if (!fetchImports) payload.skip_imports = true;
 
     let apiUrl = `${API}/import/ttl`;
     if (mode === "new-project") {
