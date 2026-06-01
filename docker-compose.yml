@@ -3,7 +3,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-    image: eljeffe/amethyst:latest
+    image: eljeffe/amethyst-ontology-editor:latest
     container_name: amethyst
     ports:
       - "3000:3000"
