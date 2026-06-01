@@ -1,0 +1,9 @@
+**/node_modules
+**/dist
+**/.vite
+data
+.git
+.DS_Store
+*.log
+.env
+**/*.bak

@@ -1,0 +1,15 @@
+dbs:
+  - path: ${SQLITE_DIR}/app.sqlite
+    replica:
+      type: ${LITESTREAM_REPLICA_TYPE}
+      bucket: ${LITESTREAM_REPLICA_BUCKET}
+      path: litestream/app.sqlite
+      region: ${LITESTREAM_REPLICA_REGION}
+      endpoint: ${LITESTREAM_REPLICA_ENDPOINT}
+  - path: ${SQLITE_DIR}/sessions.sqlite
+    replica:
+      type: ${LITESTREAM_REPLICA_TYPE}
+      bucket: ${LITESTREAM_REPLICA_BUCKET}
+      path: litestream/sessions.sqlite
+      region: ${LITESTREAM_REPLICA_REGION}
+      endpoint: ${LITESTREAM_REPLICA_ENDPOINT}

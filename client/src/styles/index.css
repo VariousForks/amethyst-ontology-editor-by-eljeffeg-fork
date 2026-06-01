@@ -1,0 +1,249 @@
+@import "tailwindcss";
+
+@custom-variant dark (&:is(.dark *));
+
+@theme {
+  --color-brand-50: #f2efff;
+  --color-brand-100: #e5dfff;
+  --color-brand-200: #cbbfff;
+  --color-brand-300: #ae9cff;
+  --color-brand-400: #9278ff;
+  --color-brand-500: #7a5cf5;
+  --color-brand-600: #6645dc;
+  --color-brand-700: #5437b4;
+  --color-brand-800: #402a8a;
+  --color-brand-900: #2d1d66;
+  --color-brand-950: #1b1242;
+
+  --color-ink-50: #f5f3fb;
+  --color-ink-100: #e7e3f3;
+  --color-ink-200: #cac2e4;
+  --color-ink-300: #9a92c0;
+  --color-ink-400: #6c6192;
+  --color-ink-500: #4a3e72;
+  --color-ink-600: #352c5b;
+  --color-ink-700: #281e4a;
+  --color-ink-800: #1e163b;
+  --color-ink-900: #18122e;
+  --color-ink-950: #100c24;
+
+  --font-sans: Inter, system-ui, ui-sans-serif, sans-serif;
+  --font-mono: JetBrains Mono, ui-monospace, SFMono-Regular, monospace;
+}
+
+/*
+  The default border color has changed to `currentcolor` in Tailwind CSS v4,
+  so we've added these compatibility styles to make sure everything still
+  looks the same as it did with Tailwind CSS v3.
+
+  If we ever want to remove these styles, we need to add an explicit border
+  color utility to any element that depends on these defaults.
+*/
+@layer base {
+  *,
+  ::after,
+  ::before,
+  ::backdrop,
+  ::file-selector-button {
+    border-color: var(--color-gray-200, currentcolor);
+  }
+}
+
+@utility panel {
+  @apply bg-ink-800/70 backdrop-blur-sm border border-ink-600/50 rounded-lg shadow-lg shadow-brand-900/20;
+}
+
+@utility btn {
+  @apply inline-flex items-center gap-2 px-3 py-1.5 rounded-md text-sm font-medium bg-ink-700 hover:bg-ink-600 active:bg-ink-700 border border-ink-500/60 text-slate-100 transition disabled:opacity-50 disabled:cursor-not-allowed;
+}
+
+@utility btn-primary {
+  @apply btn bg-brand-600 hover:bg-brand-500 border-brand-400/60 shadow-md shadow-brand-900/40;
+}
+
+@utility btn-ghost {
+  @apply btn bg-transparent hover:bg-ink-700/70 border-transparent;
+}
+
+@utility btn-danger {
+  @apply btn bg-rose-600/90 hover:bg-rose-500 border-rose-400/60;
+}
+
+@utility input {
+  @apply w-full px-3 py-1.5 rounded-md bg-ink-900 border border-ink-500/50 text-slate-100 placeholder:text-slate-500 focus:outline-hidden focus:ring-2 focus:ring-brand-400/60 focus:border-brand-400;
+}
+
+@utility label {
+  @apply block text-xs uppercase tracking-wide text-slate-400 mb-1;
+}
+
+@utility chip {
+  @apply inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs bg-ink-700/60 border border-ink-500/50 text-slate-200;
+}
+
+@utility chip-class {
+  @apply chip bg-brand-900/40 border-brand-500/60 text-brand-200;
+}
+
+@utility chip-prop {
+  @apply chip bg-emerald-900/30 border-emerald-500/50 text-emerald-200;
+}
+
+@utility chip-ind {
+  @apply chip bg-amber-900/30 border-amber-500/50 text-amber-200;
+}
+
+@utility chip-inv {
+  @apply chip bg-yellow-500/30 border-yellow-200/50 text-yellow-100;
+}
+
+@utility chip-datatype {
+  @apply chip bg-fuchsia-900/30 border-fuchsia-500/50 text-fuchsia-200;
+}
+
+@utility graph-canvas {
+  /* Graph canvas: deep violet with a subtle dot grid for visual rhythm */
+  background-color: #100c24;
+  background-image:
+    radial-gradient(circle at 40% 20%, rgba(146, 120, 255, 0.13), transparent 55%),
+    radial-gradient(circle at 85% 80%, rgba(102, 69, 220, 0.14), transparent 55%),
+    radial-gradient(rgba(174, 156, 255, 0.19) 1px, transparent 1px);
+  background-size:
+    auto,
+    auto,
+    22px 22px;
+  background-position:
+    0 0,
+    0 0,
+    0 0;
+}
+
+@layer base {
+  :root {
+    color-scheme: dark;
+  }
+  html,
+  body,
+  #root {
+    height: 100%;
+    overflow: hidden;
+  }
+  body {
+    font-family: "Inter", system-ui, sans-serif;
+    /* Bluish-purple glow on a soft dark violet base */
+    background:
+      radial-gradient(1200px 600px at 80% -10%, rgba(146, 120, 255, 0.21), transparent 60%),
+      radial-gradient(900px 500px at -5% 110%, rgba(102, 69, 220, 0.17), transparent 60%), #18122e;
+  }
+}
+
+/* Scrollbar */
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: rgba(174, 156, 255, 0.2);
+  border-radius: 6px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(174, 156, 255, 0.35);
+}
+
+/* GitHub-flavored markdown rendered in GitHubIssuesView */
+.prose-github h1,
+.prose-github h2,
+.prose-github h3,
+.prose-github h4,
+.prose-github h5,
+.prose-github h6 {
+  color: #e2e8f0;
+  font-weight: 600;
+  margin: 0.75em 0 0.4em;
+  line-height: 1.3;
+}
+.prose-github h1 {
+  font-size: 1.2em;
+}
+.prose-github h2 {
+  font-size: 1.1em;
+}
+.prose-github h3 {
+  font-size: 1em;
+}
+.prose-github p {
+  margin: 0.5em 0;
+}
+.prose-github ul,
+.prose-github ol {
+  margin: 0.5em 0;
+  padding-left: 1.4em;
+}
+.prose-github li {
+  margin: 0.2em 0;
+}
+.prose-github code {
+  background: rgba(148, 163, 184, 0.1);
+  border: 1px solid rgba(148, 163, 184, 0.15);
+  border-radius: 3px;
+  padding: 0.1em 0.35em;
+  font-size: 0.85em;
+  font-family: ui-monospace, monospace;
+  color: #c4b5fd;
+}
+.prose-github pre {
+  background: rgba(15, 23, 42, 0.7);
+  border: 1px solid rgba(148, 163, 184, 0.12);
+  border-radius: 6px;
+  padding: 0.75em 1em;
+  overflow-x: auto;
+  margin: 0.5em 0;
+}
+.prose-github pre code {
+  background: none;
+  border: none;
+  padding: 0;
+  color: #94a3b8;
+  font-size: 0.82em;
+}
+.prose-github blockquote {
+  border-left: 3px solid rgba(148, 163, 184, 0.3);
+  padding-left: 0.75em;
+  margin: 0.5em 0;
+  color: #94a3b8;
+}
+.prose-github a {
+  color: #9278ff;
+  text-decoration: none;
+}
+.prose-github a:hover {
+  text-decoration: underline;
+}
+.prose-github hr {
+  border: none;
+  border-top: 1px solid rgba(148, 163, 184, 0.15);
+  margin: 0.75em 0;
+}
+.prose-github img {
+  max-width: 100%;
+  border-radius: 4px;
+}
+.prose-github table {
+  border-collapse: collapse;
+  font-size: 0.85em;
+  width: 100%;
+  margin: 0.5em 0;
+}
+.prose-github th,
+.prose-github td {
+  border: 1px solid rgba(148, 163, 184, 0.2);
+  padding: 0.3em 0.6em;
+  text-align: left;
+}
+.prose-github th {
+  background: rgba(148, 163, 184, 0.08);
+  color: #e2e8f0;
+}

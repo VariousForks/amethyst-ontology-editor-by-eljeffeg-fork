@@ -1,0 +1,83 @@
+services:
+  amethyst:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: eljeffe/amethyst:latest
+    container_name: amethyst
+    ports:
+      - "3000:3000"
+    environment:
+      - NODE_ENV=production
+      - PORT=3000
+      - DATA_DIR=/app/data
+      - SESSION_SECRET=${SESSION_SECRET:-please-change-me}
+      # Set to "true" only when serving over HTTPS (e.g. behind nginx/Cloud Run TLS).
+      # Leave as "false" (the default) for plain HTTP local access.
+      - COOKIE_SECURE=${COOKIE_SECURE:-false}
+      # Google OAuth — set both variables to enable "Continue with Google" on the login page.
+      # Register your app at https://console.cloud.google.com/apis/credentials
+      # and add <your-origin>/api/auth/google/callback as an Authorized redirect URI.
+      #- GOOGLE_CLIENT_ID=${GOOGLE_CLIENT_ID}
+      #- GOOGLE_CLIENT_SECRET=${GOOGLE_CLIENT_SECRET}
+      # Optional: override the callback URL if your app is behind a reverse proxy.
+      #- GOOGLE_CALLBACK_URL=https://your-domain.com/api/auth/google/callback
+      # Email / SMTP — set SMTP_HOST (at minimum) to enable email delivery for invites.
+      # If SMTP_HOST is not set, invite links are displayed in the UI instead of emailed.
+      #- SMTP_HOST=smtp.example.com          # Required: SMTP server hostname
+      #- SMTP_PORT=587                        # Optional: defaults to 587 (use 465 for SSL)
+      #- SMTP_SECURE=false                    # Optional: set to "true" to use TLS/SSL (port 465)
+      #- SMTP_USER=you@example.com            # Optional: SMTP authentication username
+      #- SMTP_PASS=your-smtp-password         # Optional: SMTP authentication password
+      #- SMTP_FROM=no-reply@example.com       # Optional: From address; falls back to SMTP_USER
+      # App base URL — set this when the server is behind a TLS-terminating proxy
+      # (e.g. Cloud Run, nginx) so that invite links and other server-generated URLs
+      # use the correct public scheme and hostname instead of the internal http://.
+      #- APP_BASE_URL=https://your-domain.com
+
+      # Data directory — ontology TTL files (ontologies/, branches/). Safe
+      # to point at a GCSFuse / s3fs mount — TTLs are written sequentially,
+      # which FUSE handles fine.
+      #- DATA_DIR=/app/data
+
+      # SQLite directory — must be on real local disk (POSIX filesystem),
+      # never on a FUSE mount. Default chosen by the entrypoint:
+      #   Litestream on  → /tmp (tmpfs; durability via GCS replication)
+      #   Litestream off → DATA_DIR (the persistent docker volume)
+      # Set explicitly to override either default.
+      #- SQLITE_DIR=/tmp
+
+      # Litestream — when LITESTREAM_REPLICA_BUCKET is set, the container
+      # restores SQLite from object storage at startup and continuously
+      # replicates changes back. Leave unset to disable (local dev /
+      # docker-compose).
+      #- LITESTREAM_REPLICA_BUCKET=your-bucket-name
+      # Backend type: gs (default, GCS) | s3. For gs, auth via service
+      # account / workload identity / GOOGLE_APPLICATION_CREDENTIALS. For
+      # s3, auth via AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY env vars.
+      # (0.3.x called this "gcs"; 0.5.x renamed to "gs".)
+      #- LITESTREAM_REPLICA_TYPE=gs
+      # S3 only — region is required; endpoint is set only for s3-compatible
+      # backends like Cloudflare R2, Tigris, MinIO. Ignored for GCS.
+      #- LITESTREAM_REPLICA_REGION=us-east-1
+      #- LITESTREAM_REPLICA_ENDPOINT=https://<account>.r2.cloudflarestorage.com
+
+      # PostgreSQL — set DATABASE_URL to use PostgreSQL instead of the default
+      # embedded SQLite database. Recommended for production deployments and any
+      # environment where the container filesystem is ephemeral (Cloud Run, etc.).
+      # The server automatically creates all required tables on first startup.
+      # Format: postgres://user:password@host:5432/dbname
+      # Example with Cloud SQL (via Unix socket proxy):
+      #   postgres://app:secret@/dbname?host=/cloudsql/project:region:instance
+      #- DATABASE_URL=postgres://user:password@localhost:5432/amethyst
+    volumes:
+      - amethyst:/app/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://localhost:3000/api/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+volumes:
+  amethyst:

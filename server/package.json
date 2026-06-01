@@ -1,0 +1,27 @@
+{
+  "name": "ontology-editor-server",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "src/index.js",
+  "scripts": {
+    "dev": "node --watch src/index.js",
+    "start": "node src/index.js"
+  },
+  "dependencies": {
+    "bcryptjs": "^3.0.3",
+    "better-sqlite3": "^12.10.0",
+    "better-sqlite3-session-store": "^0.1.0",
+    "connect-pg-simple": "^10.0.0",
+    "cookie-parser": "^1.4.7",
+    "cors": "^2.8.6",
+    "express": "^5.2.1",
+    "express-session": "^1.19.0",
+    "google-auth-library": "^10.6.2",
+    "multer": "^2.1.1",
+    "nodemailer": "^8.0.10",
+    "oxigraph": "^0.5.8",
+    "pg": "^8.21.0",
+    "uuid": "^14.0.0"
+  }
+}
