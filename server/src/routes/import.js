@@ -1,3 +1,4 @@
+import dns from "node:dns";
 import http from "node:http";
 import https from "node:https";
 import { Router } from "express";
@@ -55,6 +56,40 @@ function stripIriTrailing(s) {
   return end < s.length ? s.slice(0, end) : s;
 }
 
+/**
+ * Returns true if the resolved IP address targets private/internal infrastructure.
+ * Covers IPv4 and IPv6, including numeric-encoded addresses that bypass hostname
+ * string checks (e.g. http://2130706433/ == 127.0.0.1).
+ */
+function isBlockedIp(ip) {
+  // Normalise: strip IPv6 brackets if present
+  const addr = ip.replace(/^\[|\]$/g, "").toLowerCase();
+  const BLOCKED_IPS = [
+    // IPv4 loopback & unspecified
+    /^127\./,
+    /^0\.0\.0\.0$/,
+    // IPv4 link-local / cloud metadata
+    /^169\.254\./,
+    // RFC1918 private ranges
+    /^10\./,
+    /^172\.(1[6-9]|2[0-9]|3[01])\./,
+    /^192\.168\./,
+    // IPv6 loopback & unspecified
+    /^::1$/,
+    /^::$/,
+    /^0:0:0:0:0:0:0:1$/,
+    /^0:0:0:0:0:0:0:0$/,
+    // IPv4-mapped IPv6 (::ffff:127.x, ::ffff:10.x, etc.)
+    /^::ffff:/i,
+    /^0:0:0:0:0:ffff:/i,
+    // IPv6 link-local
+    /^fe80:/i,
+    // IPv6 unique local (fc00::/7 — equivalent of RFC1918)
+    /^f[cd][0-9a-f]{0,2}:/i,
+  ];
+  return BLOCKED_IPS.some((re) => re.test(addr));
+}
+
 // Returns the validated, normalized URL string to use downstream.
 // Throws if the URL targets private/internal infrastructure (SSRF prevention).
 function validateFetchUrl(url) {
@@ -68,31 +103,14 @@ function validateFetchUrl(url) {
     throw new Error(`Disallowed protocol: ${parsed.protocol}`);
   }
   const host = parsed.hostname.toLowerCase();
-  const BLOCKED = [
-    /^localhost$/,
-    /^127\./,
-    /^0\.0\.0\.0$/,
-    /^::1$/,
-    /^::$/,
-    /^0:0:0:0:0:0:0:1$/,
-    /^0:0:0:0:0:0:0:0$/,
-    // IPv4-mapped IPv6 (e.g. ::ffff:127.0.0.1)
-    /^::ffff:/i,
-    /^0:0:0:0:0:ffff:/i,
-    // Link-local / cloud metadata
-    /^169\.254\./,
-    /^fe80:/i,
-    /^metadata\.google\.internal$/,
-    // RFC1918 private ranges
-    /^10\./,
-    /^172\.(1[6-9]|2[0-9]|3[01])\./,
-    /^192\.168\./,
-    // IPv6 unique local (fc00::/7 — equivalent of RFC1918)
-    /^f[cd][0-9a-f]{0,2}:/i,
-    // mDNS
-    /\.local$/,
-  ];
-  if (BLOCKED.some((re) => re.test(host))) {
+  // Block hostnames that are obviously private/internal without a DNS lookup.
+  // isBlockedIp also covers numeric-encoded addresses (e.g. http://2130706433/).
+  if (
+    host === "localhost" ||
+    host === "metadata.google.internal" ||
+    /\.local$/.test(host) ||
+    isBlockedIp(host)
+  ) {
     throw new Error(`Disallowed host: ${host}`);
   }
   // Return the normalized URL from the parsed object (not the raw input)
@@ -100,19 +118,55 @@ function validateFetchUrl(url) {
 }
 
 /**
- * Follow redirects and return { text, contentType } for the given URL.
+ * Follow redirects and return { text, contentType, finalUrl } for the given URL.
  * Limits to 5 redirects and a 32 MB body to stay reasonable.
+ *
+ * SSRF hardening: after validateFetchUrl passes the hostname string checks, we
+ * resolve the hostname to IP addresses and reject any that land in private/
+ * internal ranges.  We then pin the connection to the already-validated IPs via
+ * the `lookup` option so a DNS rebinding attack cannot swap in a different
+ * address between the resolution check and the actual TCP connect.
+ *
+ * Note: user-supplied URL input is intentionally used here — the feature
+ * requires fetching arbitrary public ontology IRIs.  validateFetchUrl +
+ * isBlockedIp + pinned DNS lookup together prevent SSRF.
+ * lgtm[js/ssrf]
  */
-function httpGet(url, redirectsLeft = 5) {
+async function httpGet(url, redirectsLeft = 5) {
+  // validateFetchUrl throws on unsafe URLs and returns the normalized URL;
+  // use safeUrl downstream so the value flowing into lib.get is sanitized.
+  const safeUrl = validateFetchUrl(url);
+  const parsed = new URL(safeUrl);
+
+  // Resolve all addresses for the hostname and reject any that are private/
+  // internal.  This catches numeric-encoded IPs, DNS-based aliases to private
+  // ranges, and similar bypasses that string-only checks miss.
+  const addresses = await dns.promises.lookup(parsed.hostname, { all: true });
+  for (const { address } of addresses) {
+    if (isBlockedIp(address)) {
+      throw new Error(`Disallowed host: ${parsed.hostname} resolves to ${address}`);
+    }
+  }
+
+  // Build a pinned lookup function so the TCP stack connects to the exact IPs
+  // we already validated — prevents TOCTOU / DNS-rebinding races.
+  const pinnedAddrs = addresses.map(({ address, family }) => ({ address, family }));
+  function pinnedLookup(_hostname, _opts, cb) {
+    // Node's lookup callback expects (err, address, family) for a single result
+    // or (err, addresses) for { all: true }.  http.get passes options without
+    // `all`, so return the first address in the expected single-address form.
+    const { address, family } = pinnedAddrs[0];
+    cb(null, address, family);
+  }
+
+  const lib = parsed.protocol === "https:" ? https : http;
+
   return new Promise((resolve, reject) => {
-    // validateFetchUrl throws on unsafe URLs and returns the normalized URL;
-    // use safeUrl downstream so the value flowing into lib.get is sanitized.
-    const safeUrl = validateFetchUrl(url);
-    const parsed = new URL(safeUrl);
-    const lib = parsed.protocol === "https:" ? https : http;
+    // lgtm[js/ssrf] — URL is validated by validateFetchUrl + isBlockedIp + pinned DNS above
     const req = lib.get(
       safeUrl,
       {
+        lookup: pinnedLookup,
         headers: {
           Accept:
             "text/turtle, application/rdf+xml;q=0.9, application/ld+json;q=0.8, application/n-triples;q=0.7, */*;q=0.5",
@@ -121,12 +175,14 @@ function httpGet(url, redirectsLeft = 5) {
         timeout: 30_000,
       },
       (res) => {
-        // Follow 3xx redirects
+        // Follow 3xx redirects — each hop goes through the full httpGet chain
+        // (validateFetchUrl + DNS check + pinned lookup) so redirects into
+        // private infrastructure are also blocked.
         if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
           res.resume();
           if (redirectsLeft <= 0) return reject(new Error(`Too many redirects fetching ${url}`));
-          const next = validateFetchUrl(new URL(res.headers.location, url).toString());
-          return resolve(httpGet(next, redirectsLeft - 1));
+          const nextRaw = new URL(res.headers.location, url).toString();
+          return resolve(httpGet(nextRaw, redirectsLeft - 1));
         }
         if (res.statusCode < 200 || res.statusCode >= 300) {
           res.resume();
