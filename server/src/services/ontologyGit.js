@@ -24,6 +24,17 @@ const execFileP = promisify(execFile);
 export const ONTO_DIR = path.join(DATA_DIR, "ontologies");
 export const BRANCHES_DIR = path.join(DATA_DIR, "branches");
 
+// Only UUID-shaped IDs are valid — same allowlist as rdfStore.graphFileFor().
+// Hoist to a local variable so the regex barrier is on the same SSA node that
+// flows into path.join, allowing static-analysis tools (CodeQL) to recognise
+// the allowlist check and suppress path-injection false positives.
+const _UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+function assertUuid(id, label) {
+  const s = String(id);
+  if (!_UUID_RE.test(s)) throw new Error(`[ontologyGit] invalid ${label}`);
+  return s;
+}
+
 // ── Directory setup ───────────────────────────────────────────────────────────
 
 /**
@@ -47,7 +58,9 @@ export async function initOntologyRepo() {
  * This is the file that receives live edits and is loaded by rdfStore.
  */
 export function getBranchFilePath(branchId, parentId) {
-  return path.join(BRANCHES_DIR, branchId, `${parentId}.ttl`);
+  const bid = assertUuid(branchId, "branchId");
+  const pid = assertUuid(parentId, "parentId");
+  return path.join(BRANCHES_DIR, bid, `${pid}.ttl`);
 }
 
 /**
@@ -56,7 +69,8 @@ export function getBranchFilePath(branchId, parentId) {
  * created; it is used as the common ancestor in 3-way RDF merge.
  */
 export function getBranchBasePath(branchId) {
-  return path.join(BRANCHES_DIR, branchId, "base.ttl");
+  const bid = assertUuid(branchId, "branchId");
+  return path.join(BRANCHES_DIR, bid, "base.ttl");
 }
 
 // ── Branch lifecycle ──────────────────────────────────────────────────────────

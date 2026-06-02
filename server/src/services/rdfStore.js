@@ -89,10 +89,14 @@ export function graphIrisFor(ontologyIds) {
 const ONTOLOGY_ID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 export function graphFileFor(ontologyId) {
-  if (!ONTOLOGY_ID_RE.test(String(ontologyId))) {
+  // Hoist to a local variable so the regex barrier is on the same SSA node
+  // that flows into path.join — this allows static-analysis tools (CodeQL) to
+  // recognise the allowlist check and suppress path-injection false positives.
+  const id = String(ontologyId);
+  if (!ONTOLOGY_ID_RE.test(id)) {
     throw new Error(`[rdfStore] invalid ontology ID`);
   }
-  return path.join(ONTO_DIR, `${ontologyId}.ttl`);
+  return path.join(ONTO_DIR, `${id}.ttl`);
 }
 
 /**
