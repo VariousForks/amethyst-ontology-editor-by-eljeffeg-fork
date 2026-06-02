@@ -1170,8 +1170,7 @@ router.get(
       return res.status(400).json({ error: "No GitHub repo configured for this project." });
     const [owner, repo] = project.github_repo.split("/");
     const { number } = req.params;
-    if (!/^\d+$/.test(number))
-      return res.status(400).json({ error: "Invalid issue number." });
+    if (!/^\d+$/.test(number)) return res.status(400).json({ error: "Invalid issue number." });
     try {
       const [issue, comments] = await Promise.all([
         getIssue(req.githubToken, owner, repo, number),
@@ -1232,8 +1231,7 @@ router.post(
       return res.status(400).json({ error: "No GitHub repo configured for this project." });
     const [owner, repo] = project.github_repo.split("/");
     const { number } = req.params;
-    if (!/^\d+$/.test(number))
-      return res.status(400).json({ error: "Invalid issue number." });
+    if (!/^\d+$/.test(number)) return res.status(400).json({ error: "Invalid issue number." });
     const { body } = req.body || {};
     if (!body?.trim()) return res.status(400).json({ error: "body is required" });
     try {

@@ -335,7 +335,9 @@ export async function persistOntology(ontologyId) {
       } catch {}
       if (existing) {
         console.warn(
-          `[rdfStore] persist(${String(ontologyId).replace(/[\r\n%]/g, " ").slice(0, 80)}): store has 0 quads but file is non-empty — ` +
+          `[rdfStore] persist(${String(ontologyId)
+            .replace(/[\r\n%]/g, " ")
+            .slice(0, 80)}): store has 0 quads but file is non-empty — ` +
             "skipping overwrite to protect existing data.",
         );
         return;
@@ -344,7 +346,9 @@ export async function persistOntology(ontologyId) {
 
     await fs.promises.writeFile(safeFilePath, text, "utf-8");
   } catch (err) {
-    const _safeId = String(ontologyId).replace(/[\r\n%]/g, " ").slice(0, 80);
+    const _safeId = String(ontologyId)
+      .replace(/[\r\n%]/g, " ")
+      .slice(0, 80);
     console.warn("[rdfStore] persist(%s) failed:", _safeId, err.message);
   }
 }
@@ -385,7 +389,9 @@ export async function flushToDisk() {
           console.log(`[rdfStore] flushed "${record?.name || id}" to disk`);
         }
       } catch (err) {
-        const _safeId = String(id).replace(/[\r\n%]/g, " ").slice(0, 80);
+        const _safeId = String(id)
+          .replace(/[\r\n%]/g, " ")
+          .slice(0, 80);
         console.warn("[rdfStore] flushToDisk(%s) failed:", _safeId, err.message);
       }
     }),
@@ -419,7 +425,9 @@ export async function writeFileToDisk(ontologyId) {
       } catch {}
       if (existing) {
         console.warn(
-          `[rdfStore] writeFileToDisk(${String(ontologyId).replace(/[\r\n%]/g, " ").slice(0, 80)}): store has 0 quads but file is non-empty — skipping.`,
+          `[rdfStore] writeFileToDisk(${String(ontologyId)
+            .replace(/[\r\n%]/g, " ")
+            .slice(0, 80)}): store has 0 quads but file is non-empty — skipping.`,
         );
         return;
       }
@@ -430,7 +438,9 @@ export async function writeFileToDisk(ontologyId) {
 
     await fs.promises.writeFile(safeFilePath, text, "utf-8");
   } catch (err) {
-    const _safeId = String(ontologyId).replace(/[\r\n%]/g, " ").slice(0, 80);
+    const _safeId = String(ontologyId)
+      .replace(/[\r\n%]/g, " ")
+      .slice(0, 80);
     console.warn("[rdfStore] writeFileToDisk(%s) failed:", _safeId, err.message);
   }
 }
