@@ -344,12 +344,8 @@ export async function persistOntology(ontologyId) {
 
     await fs.promises.writeFile(safeFilePath, text, "utf-8");
   } catch (err) {
-    console.warn(
-      `[rdfStore] persist(${String(ontologyId)
-        .replace(/[\r\n%]/g, " ")
-        .slice(0, 80)}) failed:`,
-      err.message,
-    );
+    const _safeId = String(ontologyId).replace(/[\r\n%]/g, " ").slice(0, 80);
+    console.warn("[rdfStore] persist(%s) failed:", _safeId, err.message);
   }
 }
 
@@ -389,7 +385,8 @@ export async function flushToDisk() {
           console.log(`[rdfStore] flushed "${record?.name || id}" to disk`);
         }
       } catch (err) {
-        console.warn(`[rdfStore] flushToDisk(${String(id).replace(/[\r\n%]/g, " ").slice(0, 80)}) failed:`, err.message);
+        const _safeId = String(id).replace(/[\r\n%]/g, " ").slice(0, 80);
+        console.warn("[rdfStore] flushToDisk(%s) failed:", _safeId, err.message);
       }
     }),
   );
@@ -433,12 +430,8 @@ export async function writeFileToDisk(ontologyId) {
 
     await fs.promises.writeFile(safeFilePath, text, "utf-8");
   } catch (err) {
-    console.warn(
-      `[rdfStore] writeFileToDisk(${String(ontologyId)
-        .replace(/[\r\n%]/g, " ")
-        .slice(0, 80)}) failed:`,
-      err.message,
-    );
+    const _safeId = String(ontologyId).replace(/[\r\n%]/g, " ").slice(0, 80);
+    console.warn("[rdfStore] writeFileToDisk(%s) failed:", _safeId, err.message);
   }
 }
 
@@ -605,7 +598,7 @@ export async function dropOntologyGraph(ontologyId) {
   try {
     getStore().update(`DROP GRAPH <${graphIriFor(ontologyId)}>`);
   } catch (err) {
-    console.warn(`[rdfStore] drop graph failed:`, err.message);
+    console.warn("[rdfStore] drop graph failed:", err.message);
   }
   const safeFile = assertSafePath(graphFileFor(ontologyId));
   try {

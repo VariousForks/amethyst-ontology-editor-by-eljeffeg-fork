@@ -123,7 +123,7 @@ export async function deleteBranch(branchId) {
     await fs.promises.rm(safeDir, { recursive: true, force: true });
     console.log(`[ontologyBranch] deleted branch directory for ${safeId}`);
   } catch (err) {
-    console.warn(`[ontologyBranch] deleteBranch failed for ${safeId}:`, err.message);
+    console.warn("[ontologyBranch] deleteBranch failed for %s:", safeId, err.message);
   }
 }
 
