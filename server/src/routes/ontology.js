@@ -136,7 +136,10 @@ router.get("/meta", requireAuth, resolveOntology, requireProjectRole("viewer"), 
   }
 
   res.json({
-    meta: { ...row, versionInfo },
+    meta: {
+      ...row,
+      versionInfo,
+    },
     stats: {
       triples: +(tripleRow?.n?.value || 0),
       classes: +classCount,

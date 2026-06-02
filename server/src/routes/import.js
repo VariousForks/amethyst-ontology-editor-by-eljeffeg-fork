@@ -13,6 +13,7 @@ import {
   getOntology,
   getProject,
   getProjectRoleFor,
+  listOntologiesForProject,
   logChange,
   projectRoleMeets,
 } from "../services/authDb.js";
@@ -42,6 +43,66 @@ const upload = multer({
 });
 
 // ── URL fetching helpers ──────────────────────────────────────────────────────
+
+/**
+ * Convert a github.com blob URL to its raw.githubusercontent.com equivalent.
+ * e.g. https://github.com/o/r/blob/branch/path → https://raw.githubusercontent.com/o/r/branch/path
+ * Non-GitHub URLs pass through unchanged.
+ */
+function normalizeGitHubBlobUrl(url) {
+  try {
+    const parsed = new URL(url);
+    if (parsed.hostname === "github.com" && parsed.pathname.includes("/blob/")) {
+      // pathname = /{owner}/{repo}/blob/{branch}/{...path}
+      const parts = parsed.pathname.split("/").filter(Boolean);
+      // parts[0]=owner, [1]=repo, [2]="blob", [3]=branch, [4+]=path
+      if (parts.length >= 5 && parts[2] === "blob") {
+        const [owner, repo, , branch, ...rest] = parts;
+        return `https://raw.githubusercontent.com/${owner}/${repo}/${branch}/${rest.join("/")}`;
+      }
+    }
+  } catch {
+    // not a valid URL — fall through
+  }
+  return url;
+}
+
+/**
+ * Extract the owl:Ontology subject IRI from N-Quads text.
+ * Cheap regex scan on already-parsed output — avoids re-loading into the store.
+ * Returns the first IRI that appears as subject of rdf:type owl:Ontology, or null.
+ */
+function extractOntologyIriFromNquads(nquads) {
+  // N-Quads line format: <subject> <predicate> <object> [<graph>] .
+  // We look for: <S> <…rdf#type> <…owl#Ontology>
+  const OWL_ONTOLOGY = "http://www.w3.org/2002/07/owl#Ontology>";
+  const RDF_TYPE = "http://www.w3.org/1999/02/22-rdf-syntax-ns#type>";
+  for (const line of nquads.split("\n")) {
+    if (!line.includes(OWL_ONTOLOGY) || !line.includes(RDF_TYPE)) continue;
+    const m = line.match(/^<([^>]+)>\s+<[^>]+#type>\s+<[^>]+#Ontology>/);
+    if (m) return m[1];
+  }
+  return null;
+}
+
+/**
+ * Build a Set of canonical ontology IRIs already present in a project.
+ * Used to pre-seed seenIris so imports that duplicate existing ontologies are skipped.
+ */
+async function buildProjectSeenIris(projectId) {
+  const seenIris = new Set();
+  try {
+    const ontologies = await listOntologiesForProject(projectId);
+    for (const o of ontologies) {
+      if (o.iri) seenIris.add(o.iri);
+      const subjectIri = getOntologySubjectIri(o.id);
+      if (subjectIri) seenIris.add(subjectIri);
+    }
+  } catch {
+    // non-fatal — worst case we load a dup once
+  }
+  return seenIris;
+}
 
 /**
  * Reject URLs that target private/internal infrastructure (SSRF prevention).
@@ -133,6 +194,8 @@ function validateFetchUrl(url) {
  * lgtm[js/ssrf]
  */
 async function httpGet(url, redirectsLeft = 5) {
+  // Rewrite github.com blob URLs to raw.githubusercontent.com for reliable RDF fetches.
+  url = normalizeGitHubBlobUrl(url);
   // validateFetchUrl throws on unsafe URLs and returns the normalized URL;
   // use safeUrl downstream so the value flowing into lib.get is sanitized.
   const safeUrl = validateFetchUrl(url);
@@ -151,12 +214,15 @@ async function httpGet(url, redirectsLeft = 5) {
   // Build a pinned lookup function so the TCP stack connects to the exact IPs
   // we already validated — prevents TOCTOU / DNS-rebinding races.
   const pinnedAddrs = addresses.map(({ address, family }) => ({ address, family }));
-  function pinnedLookup(_hostname, _opts, cb) {
+  function pinnedLookup(_hostname, opts, cb) {
     // Node's lookup callback expects (err, address, family) for a single result
-    // or (err, addresses) for { all: true }.  http.get passes options without
-    // `all`, so return the first address in the expected single-address form.
-    const { address, family } = pinnedAddrs[0];
-    cb(null, address, family);
+    // or (err, [{address, family}]) for { all: true }.  Node 18+ happy-eyeballs
+    // (autoSelectFamily) calls with opts.all = true, so we must handle both forms.
+    if (opts?.all) cb(null, pinnedAddrs);
+    else {
+      const { address, family } = pinnedAddrs[0];
+      cb(null, address, family);
+    }
   }
 
   const lib = parsed.protocol === "https:" ? https : http;
@@ -262,6 +328,7 @@ async function loadUrlWithImportsAsSiblings(
   uid,
   visited = new Set(),
   skipImports = false,
+  seenIris = new Set(),
 ) {
   if (visited.has(url)) return { created: [], failed: [] };
   visited.add(url);
@@ -292,8 +359,13 @@ async function loadUrlWithImportsAsSiblings(
   const _nq1 = await loadRdfTextInWorker(normalizeRdfNamespaces(text), format, graphNode.value);
   store.load(_nq1, { format: "application/n-quads", to_graph_name: graphNode });
 
+  // Register the canonical IRI of this top-level file so its own imports won't
+  // re-import the same ontology under a different URL.
+  const topCanonical = extractOntologyIriFromNquads(_nq1);
+  if (topCanonical) seenIris.add(topCanonical);
+
   if (skipImports) return { created: [], failed: [] };
-  return _createSiblingsForImports(store, graphNode, projectId, uid, visited);
+  return _createSiblingsForImports(store, graphNode, projectId, uid, visited, seenIris);
 }
 
 /**
@@ -303,8 +375,15 @@ async function loadUrlWithImportsAsSiblings(
  *
  * Returns an array of newly-created sibling ontology objects { id, name, iri }.
  */
-async function resolveOwlImportsAsSiblings(store, graphNode, projectId, uid, visited = new Set()) {
-  return _createSiblingsForImports(store, graphNode, projectId, uid, visited);
+async function resolveOwlImportsAsSiblings(
+  store,
+  graphNode,
+  projectId,
+  uid,
+  visited = new Set(),
+  seenIris = new Set(),
+) {
+  return _createSiblingsForImports(store, graphNode, projectId, uid, visited, seenIris);
 }
 
 /**
@@ -313,7 +392,14 @@ async function resolveOwlImportsAsSiblings(store, graphNode, projectId, uid, vis
  *
  * Returns { created: [...], failed: [{ iri, error }] }.
  */
-async function _createSiblingsForImports(store, graphNode, projectId, uid, visited) {
+async function _createSiblingsForImports(
+  store,
+  graphNode,
+  projectId,
+  uid,
+  visited,
+  seenIris = new Set(),
+) {
   const importUrls = [];
   for (const quad of store.match(null, namedNode(OWL_IMPORTS_IRI), null, graphNode)) {
     if (quad.object.termType === "NamedNode") {
@@ -327,6 +413,14 @@ async function _createSiblingsForImports(store, graphNode, projectId, uid, visit
   for (const imp of importUrls) {
     if (visited.has(imp)) continue;
 
+    // De-duplicate by canonical IRI (seenIris): if this import URL is itself a
+    // known canonical IRI we've already loaded, skip without fetching.
+    if (seenIris.has(imp)) {
+      console.log(`[import] owl:imports <${imp}> skip (seenIris dup)`);
+      visited.add(imp);
+      continue;
+    }
+
     // De-duplicate: skip if an ontology with this IRI already exists in the
     // project (e.g. another file in the same project also declares the same
     // owl:imports — SKOS, DC Terms, etc.).
@@ -335,47 +429,92 @@ async function _createSiblingsForImports(store, graphNode, projectId, uid, visit
       [projectId, imp],
     );
     if (existing) {
+      console.log(`[import] owl:imports <${imp}> skip (DB row exists id=${existing.id})`);
       visited.add(imp); // mark as seen so recursive calls skip it too
       continue;
     }
 
+    console.log(`[import] owl:imports <${imp}> starting fetch`);
     const oid = uuid();
     const now = Date.now();
     const impName = (imp.split("?")[0].split("/").filter(Boolean).pop() || "import")
       .replace(/\.[^.]+$/, "")
       .replace(/[#/]+$/, "");
     try {
+      // Fetch + parse to N-Quads (worker, non-blocking).
+      const { text, contentType, finalUrl } = await httpGet(imp);
+      const effectiveFilename =
+        (finalUrl || imp).split("?")[0].split("/").filter(Boolean).pop() || "remote";
+      const ctFormat = detectFormatFromContentType(contentType);
+      if (ctFormat === "text/html") {
+        throw new Error(
+          `Server returned text/html instead of RDF (content-type: ${contentType}). ` +
+            "The URL may require a different Accept header or the resource is unavailable.",
+        );
+      }
+      const fmt = ctFormat || detectFormat(effectiveFilename, null);
+      const g = graphIriFor(oid);
+      const nq = await loadRdfTextInWorker(normalizeRdfNamespaces(text), fmt, g);
+
+      // Detect canonical owl:Ontology subject IRI before the expensive store.load.
+      // If it matches something we've already loaded, skip the load entirely.
+      const canonical = extractOntologyIriFromNquads(nq);
+      console.log(
+        `[import] owl:imports <${imp}> fetched finalUrl=${finalUrl} ct=${contentType} fmt=${fmt} canonical=${canonical || "none"} bytes=${text.length}`,
+      );
+      if (canonical && seenIris.has(canonical)) {
+        console.log(`[import] owl:imports <${imp}> skip (canonical <${canonical}> already loaded)`);
+        visited.add(imp);
+        if (canonical !== imp) seenIris.add(imp); // also index the URL alias
+        continue;
+      }
+
       await getDb().run(
         `INSERT INTO ontologies
           (id, name, iri, description, project_id,
            created_at, created_by, updated_at, updated_by)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        [oid, impName, imp, null, projectId, now, uid, now, uid],
+        [oid, impName, canonical || imp, null, projectId, now, uid, now, uid],
       );
 
-      const g = graphIriFor(oid);
-      const sub = await loadUrlWithImportsAsSiblings(
-        imp,
+      store.load(nq, { format: "application/n-quads", to_graph_name: namedNode(g) });
+
+      // Register the canonical IRI so subsequent imports of the same ontology
+      // (via a different URL) are skipped without loading.
+      if (canonical) {
+        seenIris.add(canonical);
+        seenIris.add(imp); // also index the fetch URL itself
+      }
+      // Mark visited so other graphs that also owl:imports this URL don't re-fetch.
+      visited.add(imp);
+
+      // Follow this sibling's own owl:imports — call _createSiblingsForImports
+      // directly since we've already loaded the content above (avoids a second
+      // fetch+load that loadUrlWithImportsAsSiblings would otherwise trigger).
+      const sub = await _createSiblingsForImports(
         store,
         namedNode(g),
         projectId,
         uid,
         visited,
+        seenIris,
       );
       persistOntology(oid);
 
-      // Prefer rdfs:label / dcterms:title from the loaded graph over the
-      // URL-fragment fallback we inserted above.
-      const rdfLabel = getOntologyRdfMeta(oid).title;
-      const finalName = rdfLabel || impName;
-      if (rdfLabel) {
-        await getDb().run("UPDATE ontologies SET name = ?, updated_at = ? WHERE id = ?", [
-          rdfLabel,
-          Date.now(),
-          oid,
-        ]);
+      // Prefer rdfs:label / dcterms:title / dcterms:description from the loaded
+      // graph over the URL-fragment fallback we inserted above.
+      const rdfMeta = getOntologyRdfMeta(oid);
+      const finalName = rdfMeta.title || impName;
+      if (rdfMeta.title || rdfMeta.description) {
+        await getDb().run(
+          "UPDATE ontologies SET name = ?, description = ?, updated_at = ? WHERE id = ?",
+          [rdfMeta.title || impName, rdfMeta.description || null, Date.now(), oid],
+        );
       }
-      created.push({ id: oid, name: finalName, iri: imp }, ...sub.created);
+      console.log(
+        `[import] owl:imports <${imp}> created id=${oid} iri=${canonical || imp} name=${finalName} sub.created=${sub.created.length}`,
+      );
+      created.push({ id: oid, name: finalName, iri: canonical || imp }, ...sub.created);
       failed.push(...sub.failed);
     } catch (err) {
       // Best-effort: remove the row if the fetch/load blew up.
@@ -383,7 +522,7 @@ async function _createSiblingsForImports(store, graphNode, projectId, uid, visit
         await getDb().run("DELETE FROM ontologies WHERE id = ?", [oid]);
       } catch {}
       const msg = err.message || String(err);
-      console.warn(`[import] Failed to load owl:imports <${imp}>: ${msg}`);
+      console.warn(`[import] owl:imports <${imp}> FAILED: ${msg}`);
       failed.push({ iri: imp, error: msg });
     }
   }
@@ -497,9 +636,19 @@ async function importIntoExistingOntology(req, res) {
       // Invalidate stale cached SPARQL results so the freshly-loaded data is
       // visible immediately to all subsequent reads (meta, classes, graph, etc.).
       cacheInvalidate(oid);
-      ({ created: siblings, failed: failedImports } = skipImports
-        ? { created: [], failed: [] }
-        : await resolveOwlImportsAsSiblings(store, gNode, req.projectId, uid));
+      if (!skipImports) {
+        const seenIris = await buildProjectSeenIris(req.projectId);
+        const topIri = extractOntologyIriFromNquads(_nq2);
+        if (topIri) seenIris.add(topIri);
+        ({ created: siblings, failed: failedImports } = await resolveOwlImportsAsSiblings(
+          store,
+          gNode,
+          req.projectId,
+          uid,
+          undefined,
+          seenIris,
+        ));
+      }
     } else {
       const { text, format, filename: fn } = readUpload(req);
       filename = fn;
@@ -509,9 +658,19 @@ async function importIntoExistingOntology(req, res) {
       // Invalidate stale cached SPARQL results so the freshly-loaded data is
       // visible immediately to all subsequent reads (meta, classes, graph, etc.).
       cacheInvalidate(oid);
-      ({ created: siblings, failed: failedImports } = skipImports
-        ? { created: [], failed: [] }
-        : await resolveOwlImportsAsSiblings(store, gNode, req.projectId, uid));
+      if (!skipImports) {
+        const seenIris = await buildProjectSeenIris(req.projectId);
+        const topIri = extractOntologyIriFromNquads(_nq3);
+        if (topIri) seenIris.add(topIri);
+        ({ created: siblings, failed: failedImports } = await resolveOwlImportsAsSiblings(
+          store,
+          gNode,
+          req.projectId,
+          uid,
+          undefined,
+          seenIris,
+        ));
+      }
     }
 
     const conflicts = validatePropertyTypeConflicts(oid);
@@ -544,11 +703,27 @@ async function importIntoExistingOntology(req, res) {
       }
     }
 
-    if (req.body?.name) {
-      await getDb().run(
-        "UPDATE ontologies SET name = ?, updated_at = ?, updated_by = ? WHERE id = ?",
-        [req.body.name, Date.now(), uid, oid],
-      );
+    // Populate name and description from owl:Ontology metadata when not
+    // overridden by the caller.
+    {
+      const rdfMeta = getOntologyRdfMeta(oid);
+      if (!req.body?.name && rdfMeta.title) {
+        await getDb().run(
+          "UPDATE ontologies SET name = ?, updated_at = ?, updated_by = ? WHERE id = ?",
+          [rdfMeta.title, Date.now(), uid, oid],
+        );
+      } else if (req.body?.name) {
+        await getDb().run(
+          "UPDATE ontologies SET name = ?, updated_at = ?, updated_by = ? WHERE id = ?",
+          [req.body.name, Date.now(), uid, oid],
+        );
+      }
+      if (rdfMeta.description) {
+        await getDb().run(
+          "UPDATE ontologies SET description = ?, updated_at = ?, updated_by = ? WHERE id = ?",
+          [rdfMeta.description, Date.now(), uid, oid],
+        );
+      }
     }
     logChange(uid, oid, "import", {
       filename,
@@ -590,8 +765,19 @@ async function importAsNewOntology(req, res) {
   if (req.body?.url) {
     const url = req.body.url.toString().trim();
     filename = stripIriTrailing(url.split("?")[0].split("/").pop() || "remote") || "remote";
-    loadFn = (store, gNode) =>
-      loadUrlWithImportsAsSiblings(url, store, gNode, projectId, uid, undefined, skipImports);
+    loadFn = async (store, gNode) => {
+      const seenIris = await buildProjectSeenIris(projectId);
+      return loadUrlWithImportsAsSiblings(
+        url,
+        store,
+        gNode,
+        projectId,
+        uid,
+        undefined,
+        skipImports,
+        seenIris,
+      );
+    };
   } else {
     const { text, format, filename: fn } = readUpload(req);
     filename = fn;
@@ -600,7 +786,10 @@ async function importAsNewOntology(req, res) {
       const _nq4 = await loadRdfTextInWorker(normalizeRdfNamespaces(text), format, gNode.value);
       store.load(_nq4, { format: "application/n-quads", to_graph_name: gNode });
       if (skipImports) return { created: [], failed: [] };
-      return resolveOwlImportsAsSiblings(store, gNode, projectId, uid);
+      const seenIris = await buildProjectSeenIris(projectId);
+      const topIri = extractOntologyIriFromNquads(_nq4);
+      if (topIri) seenIris.add(topIri);
+      return resolveOwlImportsAsSiblings(store, gNode, projectId, uid, undefined, seenIris);
     };
   }
 
@@ -640,13 +829,20 @@ async function importAsNewOntology(req, res) {
     // (e.g. D3FEND ~58K triples) and preventing the modal from closing.
     schedulePersist(oid);
 
-    // If the caller didn't provide an explicit name, prefer rdfs:label /
-    // dcterms:title from the loaded ontology graph over the filename fallback.
-    if (!req.body?.name) {
-      const rdfLabel = getOntologyRdfMeta(oid).title;
-      if (rdfLabel) {
+    // Populate name and description from owl:Ontology metadata when not
+    // overridden by the caller.
+    {
+      const rdfMeta = getOntologyRdfMeta(oid);
+      if (!req.body?.name && rdfMeta.title) {
         await getDb().run("UPDATE ontologies SET name = ?, updated_at = ? WHERE id = ?", [
-          rdfLabel,
+          rdfMeta.title,
+          Date.now(),
+          oid,
+        ]);
+      }
+      if (rdfMeta.description) {
+        await getDb().run("UPDATE ontologies SET description = ?, updated_at = ? WHERE id = ?", [
+          rdfMeta.description,
           Date.now(),
           oid,
         ]);
@@ -711,8 +907,19 @@ async function importAsNewProject(req, res) {
   if (req.body?.url) {
     const url = req.body.url.toString().trim();
     filename = stripIriTrailing(url.split("?")[0].split("/").pop() || "remote") || "remote";
-    prepareLoad = (projectId) => (store, gNode) =>
-      loadUrlWithImportsAsSiblings(url, store, gNode, projectId, uid, undefined, skipImports);
+    prepareLoad = (projectId) => async (store, gNode) => {
+      const seenIris = await buildProjectSeenIris(projectId);
+      return loadUrlWithImportsAsSiblings(
+        url,
+        store,
+        gNode,
+        projectId,
+        uid,
+        undefined,
+        skipImports,
+        seenIris,
+      );
+    };
   } else {
     const { text, format, filename: fn } = readUpload(req);
     filename = fn;
@@ -721,7 +928,10 @@ async function importAsNewProject(req, res) {
       const _nq5 = await loadRdfTextInWorker(normalizeRdfNamespaces(text), format, gNode.value);
       store.load(_nq5, { format: "application/n-quads", to_graph_name: gNode });
       if (skipImports) return { created: [], failed: [] };
-      return resolveOwlImportsAsSiblings(store, gNode, projectId, uid);
+      const seenIris = await buildProjectSeenIris(projectId);
+      const topIri = extractOntologyIriFromNquads(_nq5);
+      if (topIri) seenIris.add(topIri);
+      return resolveOwlImportsAsSiblings(store, gNode, projectId, uid, undefined, seenIris);
     };
   }
 
@@ -765,13 +975,20 @@ async function importAsNewProject(req, res) {
     // Use schedulePersist (setTimeout-based) — same reason as importAsNewOntology.
     schedulePersist(oid);
 
-    // Sync the ontology's display name from rdfs:label / dcterms:title when no
-    // explicit name was provided by the caller.
-    if (!req.body?.name) {
-      const rdfLabel = getOntologyRdfMeta(oid).title;
-      if (rdfLabel) {
+    // Populate name and description from owl:Ontology metadata when not
+    // overridden by the caller.
+    {
+      const rdfMeta = getOntologyRdfMeta(oid);
+      if (!req.body?.name && rdfMeta.title) {
         await getDb().run("UPDATE ontologies SET name = ?, updated_at = ? WHERE id = ?", [
-          rdfLabel,
+          rdfMeta.title,
+          Date.now(),
+          oid,
+        ]);
+      }
+      if (rdfMeta.description) {
+        await getDb().run("UPDATE ontologies SET description = ?, updated_at = ? WHERE id = ?", [
+          rdfMeta.description,
           Date.now(),
           oid,
         ]);

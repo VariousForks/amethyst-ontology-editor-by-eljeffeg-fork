@@ -1261,7 +1261,7 @@ function computeUniqueDefaultIri(projects) {
 }
 
 export function NewProjectModal({ onClose, onCreated }) {
-  const { projects } = useProject();
+  const { projects, refresh } = useProject();
   const { githubEnabled, githubConnection } = useAuth();
   // Show GitHub mode if user has connected their account OR if GitHub is enabled
   const canUseGitHub = githubEnabled || !!githubConnection;
@@ -1280,6 +1280,9 @@ export function NewProjectModal({ onClose, onCreated }) {
   const [fetchImports, setFetchImports] = useState(true);
   const [err, setErr] = useState(null);
   const [busy, setBusy] = useState(false);
+  // Set to true when the project was created but sync had errors — switches
+  // "Cancel" to "Close" and hides the submit button so the user doesn't retry.
+  const [createdWithErrors, setCreatedWithErrors] = useState(false);
 
   // Auto-update the ontology IRI from the ontology name (or project name) in
   // kebab-case. Falls back to the unique default when both name fields are empty.
@@ -1346,22 +1349,39 @@ export function NewProjectModal({ onClose, onCreated }) {
         try {
           const syncResult = await api.syncProjectFromGitHub(pid);
           if (syncResult.synced === 0 && syncResult.errors?.length > 0) {
-            const e0 = syncResult.errors[0].error;
+            // Zero files synced — keep modal open so user sees the error.
+            // Refresh and activate the new project so it appears in the picker.
+            refresh({ projectId: pid }).catch(() => {});
+            const firstErr = syncResult.errors[0];
             setErr(
-              `Project created but sync found 0 files (${syncResult.errors.length} error${syncResult.errors.length !== 1 ? "s" : ""}: ${e0}). Retry sync from the project card.`,
+              `Project created but sync found 0 files (${syncResult.errors.length} error${syncResult.errors.length !== 1 ? "s" : ""}${firstErr.path ? `: ${firstErr.path}` : ""}: ${firstErr.error}). Retry sync from the project card.`,
             );
+            setCreatedWithErrors(true);
             setBusy(false);
-            onCreated?.(created);
+            return;
+          }
+          if (syncResult.errors?.length > 0) {
+            // Partial failure — keep modal open so user sees which imports failed.
+            refresh({ projectId: pid }).catch(() => {});
+            const firstErr = syncResult.errors[0];
+            setErr(
+              `Synced ${syncResult.synced} file${syncResult.synced !== 1 ? "s" : ""} but ${syncResult.errors.length} import${syncResult.errors.length !== 1 ? "s" : ""} failed${firstErr.path ? ` (${firstErr.path})` : ""}: ${firstErr.error}. Retry sync from the project card to resolve.`,
+            );
+            setCreatedWithErrors(true);
+            setBusy(false);
             return;
           }
         } catch (e) {
+          // Sync threw entirely — keep modal open so user sees the error.
+          refresh({ projectId: pid }).catch(() => {});
           setErr(
             `Project created but sync failed: ${e.message}. Retry sync from the project card.`,
           );
+          setCreatedWithErrors(true);
           setBusy(false);
-          onCreated?.(created);
           return;
         }
+        // Clean success — close the modal.
         onCreated?.(created);
         return;
       }
@@ -1599,43 +1619,45 @@ export function NewProjectModal({ onClose, onCreated }) {
         )}
         <div className="flex justify-end gap-2 pt-2">
           <button type="button" className="btn-ghost" onClick={onClose} disabled={busy}>
-            Cancel
+            {createdWithErrors ? "Close" : "Cancel"}
           </button>
-          <button
-            type="submit"
-            className="btn-primary flex items-center gap-2"
-            disabled={busy || (mode === "github" && !githubConnection)}
-            title={
-              mode === "github" && !githubConnection
-                ? "Connect your GitHub account in Settings first"
-                : undefined
-            }
-          >
-            {busy && (
-              <svg
-                aria-hidden="true"
-                className="animate-spin h-4 w-4 shrink-0"
-                xmlns="http://www.w3.org/2000/svg"
-                fill="none"
-                viewBox="0 0 24 24"
-              >
-                <circle
-                  className="opacity-25"
-                  cx="12"
-                  cy="12"
-                  r="10"
-                  stroke="currentColor"
-                  strokeWidth="4"
-                />
-                <path
-                  className="opacity-75"
-                  fill="currentColor"
-                  d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"
-                />
-              </svg>
-            )}
-            {busy ? "Creating…" : "Create project"}
-          </button>
+          {!createdWithErrors && (
+            <button
+              type="submit"
+              className="btn-primary flex items-center gap-2"
+              disabled={busy || (mode === "github" && !githubConnection)}
+              title={
+                mode === "github" && !githubConnection
+                  ? "Connect your GitHub account in Settings first"
+                  : undefined
+              }
+            >
+              {busy && (
+                <svg
+                  aria-hidden="true"
+                  className="animate-spin h-4 w-4 shrink-0"
+                  xmlns="http://www.w3.org/2000/svg"
+                  fill="none"
+                  viewBox="0 0 24 24"
+                >
+                  <circle
+                    className="opacity-25"
+                    cx="12"
+                    cy="12"
+                    r="10"
+                    stroke="currentColor"
+                    strokeWidth="4"
+                  />
+                  <path
+                    className="opacity-75"
+                    fill="currentColor"
+                    d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"
+                  />
+                </svg>
+              )}
+              {busy ? "Creating…" : "Create project"}
+            </button>
+          )}
         </div>
       </form>
     </ModalShell>

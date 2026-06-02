@@ -458,7 +458,48 @@ router.post(
       for (const file of files) {
         try {
           const existingOntology = byPath.get(file.path);
-          if (existingOntology?.github_sha === file.sha) {
+          // If sha matches but the in-memory graph is empty (e.g. .ttl file was missing
+          // at startup), treat as "updated" so we re-fetch and reload the content.
+          const graphIsEmpty = existingOntology
+            ? getStore()
+                .match(null, null, null, namedNode(graphIriFor(existingOntology.id)))
+                [Symbol.iterator]()
+                .next().done
+            : false;
+          if (existingOntology?.github_sha === file.sha && !graphIsEmpty) {
+            console.log(
+              `[github-sync] file ${file.path} sha=${file.sha} → unchanged (id=${existingOntology.id})`,
+            );
+            // Backfill missing metadata from the already-loaded graph (no re-fetch needed).
+            if (existingOntology && (!existingOntology.description || !existingOntology.iri)) {
+              const detectedIri = !existingOntology.iri
+                ? getOntologySubjectIri(existingOntology.id)
+                : null;
+              const { title: rdfTitle, description: rdfDescription } = getOntologyRdfMeta(
+                existingOntology.id,
+              );
+              const bFields = [];
+              const bVals = [];
+              if (detectedIri) {
+                bFields.push("iri = ?");
+                bVals.push(detectedIri);
+              }
+              if (rdfTitle) {
+                bFields.push("name = ?");
+                bVals.push(rdfTitle);
+              }
+              if (rdfDescription && !existingOntology.description) {
+                bFields.push("description = ?");
+                bVals.push(rdfDescription);
+              }
+              if (bFields.length) {
+                bVals.push(Date.now(), existingOntology.id);
+                await getDb().run(
+                  `UPDATE ontologies SET ${bFields.join(", ")}, updated_at = ? WHERE id = ?`,
+                  bVals,
+                );
+              }
+            }
             synced.push({ path: file.path, status: "unchanged" });
             continue;
           }
@@ -480,6 +521,9 @@ router.post(
           // IRIs (e.g. owl:imports <../other.ttl>) against the file's location.
           const rawGitHubUrl = `https://raw.githubusercontent.com/${owner}/${repo}/${branch}/${file.path}`;
 
+          console.log(
+            `[github-sync] file ${file.path} sha=${sha} → ${existingOntology ? "updated" : "created"} baseIri=${rawGitHubUrl} fmt=${format} bytes=${content.length}`,
+          );
           let ontologyId;
           if (existingOntology) {
             ontologyId = existingOntology.id;
@@ -532,6 +576,9 @@ router.post(
           // over the filename fallback.
           const detectedIri = getOntologySubjectIri(ontologyId);
           const { title: rdfTitle, description: rdfDescription } = getOntologyRdfMeta(ontologyId);
+          console.log(
+            `[github-sync] file ${file.path} id=${ontologyId} detectedIri=${detectedIri || "none"} title=${rdfTitle || "none"} desc=${rdfDescription ? "yes" : "no"}`,
+          );
           if (detectedIri || rdfTitle || rdfDescription) {
             const fields = [];
             const vals = [];
@@ -565,6 +612,9 @@ router.post(
             req.session.user.id,
             importVisited,
           );
+          console.log(
+            `[github-sync] file ${file.path} owl:imports: created=${siblings.length} failed=${importFailed.length}`,
+          );
           for (const s of siblings) {
             importedIds.add(s.id);
             synced.push({ path: s.iri, status: "created", ontologyId: s.id, imported: true });
@@ -575,6 +625,36 @@ router.post(
         } catch (err) {
           console.warn(`[github-sync] skipping ${file.path}: ${err.message}`);
           errors.push({ path: file.path, error: err.message });
+        }
+      }
+
+      // Dedup: remove ontology rows for the same IRI that accumulated from prior
+      // triple-imports (same ontology loaded via file, canonical IRI, and raw URL).
+      // Keep the row with a github_path; fall back to the oldest created_at.
+      const freshOntologies = await listOntologiesForProject(project.id);
+      const byIriGroups = new Map();
+      for (const o of freshOntologies) {
+        if (!o.iri) continue;
+        if (!byIriGroups.has(o.iri)) byIriGroups.set(o.iri, []);
+        byIriGroups.get(o.iri).push(o);
+      }
+      for (const [iri, group] of byIriGroups) {
+        if (group.length < 2) continue;
+        group.sort((a, b) => {
+          if (a.github_path && !b.github_path) return -1;
+          if (!a.github_path && b.github_path) return 1;
+          return (a.created_at || 0) - (b.created_at || 0);
+        });
+        const kept = group[0];
+        console.log(
+          `[github-sync] dedup iri=${iri} keeping id=${kept.id} github_path=${kept.github_path || "none"} removing ${group.length - 1} dup(s)`,
+        );
+        for (const dup of group.slice(1)) {
+          console.log(
+            `[github-sync] dedup removing id=${dup.id} github_path=${dup.github_path || "none"}`,
+          );
+          await dropOntologyGraph(dup.id).catch(() => {});
+          await getDb().run("DELETE FROM ontologies WHERE id = ?", [dup.id]);
         }
       }
 

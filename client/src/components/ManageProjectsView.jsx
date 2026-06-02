@@ -278,6 +278,7 @@ function ProjectCard({
   const [showEdit, setShowEdit] = useState(false);
   const [busy, setBusy] = useState(false);
   const [syncing, setSyncing] = useState(false);
+  const [syncErrors, setSyncErrors] = useState([]);
 
   const handleGitHubSync = async () => {
     setSyncing(true);
@@ -292,12 +293,14 @@ function ProjectCard({
             ? `Sync found 0 files — ${errCount} error${errCount !== 1 ? "s" : ""}: ${result.errors[0].error}`
             : `All files up to date from ${project.github_repo}.`,
       );
+      setSyncErrors(errCount > 0 ? result.errors : []);
       await onRefresh();
     } catch (e) {
       const msg = e.message.includes("github_not_connected")
         ? "Connect your GitHub account in Settings first."
         : e.message;
       onFlash(`GitHub sync failed: ${msg}`);
+      setSyncErrors([]);
     } finally {
       setSyncing(false);
     }
@@ -483,6 +486,34 @@ function ProjectCard({
           )}
         </div>
       </div>
+
+      {/* Per-file sync failure list — persistent, dismissable */}
+      {syncErrors.length > 0 && (
+        <div className="mx-4 mt-2 mb-1 rounded border border-red-500/30 bg-red-900/20 p-3 text-xs">
+          <div className="flex items-start justify-between gap-2">
+            <span className="font-medium text-red-300">
+              {syncErrors.length} import{syncErrors.length !== 1 ? "s" : ""} failed during last sync
+            </span>
+            <button
+              type="button"
+              onClick={() => setSyncErrors([])}
+              className="text-slate-400 hover:text-slate-200 shrink-0 leading-none"
+              aria-label="Dismiss"
+            >
+              ✕
+            </button>
+          </div>
+          <ul className="mt-2 space-y-1">
+            {syncErrors.map((e, i) => (
+              // biome-ignore lint/suspicious/noArrayIndexKey: stable error list
+              <li key={i} className="text-slate-300">
+                <span className="font-mono text-red-400">{e.path}</span>
+                {e.error && <span className="text-slate-400"> — {e.error}</span>}
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
 
       {/* Ontologies list — roots first, branches nested below their parent */}
       {expanded && (

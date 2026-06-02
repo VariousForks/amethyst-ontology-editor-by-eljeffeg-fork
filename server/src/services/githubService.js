@@ -210,7 +210,22 @@ export async function fetchFileContent(token, owner, repo, filePath, ref = "HEAD
     "GET",
     `/repos/${owner}/${repo}/contents/${encodedPath}?ref=${ref}`,
   );
-  const content = Buffer.from(data.content, "base64").toString("utf-8");
+  // Prefer download_url (raw.githubusercontent.com) — works for any file size.
+  // The base64 content field is capped at 1MB and empty for larger files.
+  if (data.download_url) {
+    const res = await fetch(data.download_url, {
+      headers: {
+        Authorization: `Bearer ${token}`,
+        "User-Agent": "Amethyst-Ontology-Editor",
+      },
+    });
+    if (!res.ok)
+      throw new GitHubError(`Failed to fetch ${filePath}: HTTP ${res.status}`, res.status);
+    const content = await res.text();
+    return { content, sha: data.sha };
+  }
+  // Fallback: base64 content for cases where download_url is absent.
+  const content = Buffer.from(data.content || "", "base64").toString("utf-8");
   return { content, sha: data.sha };
 }
 

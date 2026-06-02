@@ -805,6 +805,8 @@ function termToPlain(term) {
 // ── Ontology-level metadata helpers ─────────────────────────────────────────
 // Common Dublin Core Terms namespace used for title/description/creator/license.
 const DCT_NS = "http://purl.org/dc/terms/";
+// DC elements 1.1 — older ontologies may use dc: instead of dcterms:
+const DC_NS = "http://purl.org/dc/elements/1.1/";
 
 /** Return the subject IRI of the first owl:Ontology declaration in the graph,
  *  or null if none is found.
@@ -842,19 +844,27 @@ export function getOntologyRdfMeta(ontologyId) {
         ?s ?p ?o .
         FILTER(?p IN (
           <${NS.rdfs}label>,
+          <${NS.rdfs}comment>,
           <${DCT_NS}title>,
           <${DCT_NS}description>,
-          <${NS.owl}versionInfo>,
-          <${NS.owl}versionIRI>,
           <${DCT_NS}creator>,
-          <${DCT_NS}license>
+          <${DCT_NS}license>,
+          <${DC_NS}title>,
+          <${DC_NS}description>,
+          <${DC_NS}creator>,
+          <${DC_NS}rights>,
+          <${NS.owl}versionInfo>,
+          <${NS.owl}versionIRI>
         ))
       }
     }`;
     const rows = select(q);
     let rdfsLabel = null,
+      rdfsComment = null,
       dcTitle = null,
       dcDesc = null,
+      dcElTitle = null,
+      dcElDesc = null,
       version = null,
       versionIri = null,
       creator = null,
@@ -865,24 +875,35 @@ export function getOntologyRdfMeta(ontologyId) {
       if (!p || v == null) continue;
       if (p === `${NS.rdfs}label`) {
         if (!rdfsLabel) rdfsLabel = v;
+      } else if (p === `${NS.rdfs}comment`) {
+        if (!rdfsComment) rdfsComment = v;
       } else if (p === `${DCT_NS}title`) {
         dcTitle = v;
       } else if (p === `${DCT_NS}description`) {
         dcDesc = v;
+      } else if (p === `${DC_NS}title`) {
+        if (!dcElTitle) dcElTitle = v;
+      } else if (p === `${DC_NS}description`) {
+        if (!dcElDesc) dcElDesc = v;
       } else if (p === `${NS.owl}versionInfo`) {
         version = v;
       } else if (p === `${NS.owl}versionIRI`) {
         versionIri = v;
       } else if (p === `${DCT_NS}creator`) {
-        creator = v;
+        if (!creator) creator = v;
+      } else if (p === `${DC_NS}creator`) {
+        if (!creator) creator = v;
       } else if (p === `${DCT_NS}license`) {
-        license = v;
+        if (!license) license = v;
+      } else if (p === `${DC_NS}rights`) {
+        if (!license) license = v;
       }
     }
     const meta = {};
-    const title = dcTitle || rdfsLabel;
+    const title = dcTitle || dcElTitle || rdfsLabel;
     if (title) meta.title = title;
-    if (dcDesc) meta.description = dcDesc;
+    const desc = dcDesc || dcElDesc || rdfsComment;
+    if (desc) meta.description = desc;
     if (version) meta.version = version;
     if (versionIri) meta.versionIri = versionIri;
     if (creator) meta.creator = creator;
