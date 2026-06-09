@@ -658,9 +658,10 @@ export default function GraphView() {
   const [linkedNodesData, setLinkedNodesData] = useState(new Map());
 
   // ── Linked context — project-level ontology state ─────────────────────────
-  const { writeOntologyId, linkedOntologyIds, ontologies } = useProject();
+  const { writeOntologyId, linkedOntologyIds, visibleOntologyIds, ontologies } = useProject();
   const writeOntologyIdRef = useRef(writeOntologyId);
   const linkedOntologyIdsRef = useRef(linkedOntologyIds);
+  const visibleOntologyIdsRef = useRef(visibleOntologyIds);
   const ontologiesRef = useRef(ontologies);
   useEffect(() => {
     writeOntologyIdRef.current = writeOntologyId;
@@ -669,10 +670,14 @@ export default function GraphView() {
     linkedOntologyIdsRef.current = linkedOntologyIds;
   }, [linkedOntologyIds]);
   useEffect(() => {
+    visibleOntologyIdsRef.current = visibleOntologyIds;
+  }, [visibleOntologyIds]);
+  useEffect(() => {
     ontologiesRef.current = ontologies;
   }, [ontologies]);
-  // Stable string key: graph reloads whenever the linked set changes.
+  // Stable string keys: graph reloads whenever linked or visible set changes.
   const _linkedIdsKey = linkedOntologyIds.join(",");
+  const _visibleIdsKey = visibleOntologyIds.join(",");
 
   // ── Hash helpers ──────────────────────────────────────────────────────────
 
@@ -1200,6 +1205,9 @@ export default function GraphView() {
         const _writeCid = writeId ? colorId(String(writeId)) : null;
         const ontologySlotMap = new Map();
         const linkedIdSet = new Set((linkedIds || []).map((id) => String(id)));
+        // Visible ontology IDs (excluding write target): nodes from these ontologies
+        // are in the full-scope read set and must NOT be treated as linked context.
+        const visibleIdSet = new Set((visibleOntologyIdsRef.current || []).map((id) => String(id)));
 
         let slotIdx = 0;
         (ontologiesRef.current || []).forEach((o) => {
@@ -1239,7 +1247,14 @@ export default function GraphView() {
           ...g.nodes.map((n) => {
             const oid = n.sourceOntologyId || writeId;
             const pal = palForOntology(oid);
-            const isLinked = n.sourceOntologyId && n.sourceOntologyId !== writeId;
+            // Nodes from ontologies in the visible scope are fully shown — NOT
+            // treated as linked context. Only nodes from ontologies outside
+            // the visible set (i.e., truly linked-context ontologies) get the
+            // linked:true flag that triggers dimming and hideEquiv filtering.
+            const isLinked =
+              n.sourceOntologyId &&
+              String(n.sourceOntologyId) !== String(writeId) &&
+              !visibleIdSet.has(String(n.sourceOntologyId));
             return {
               data: {
                 id: n.id,
@@ -1739,7 +1754,7 @@ export default function GraphView() {
     return () => {
       cancelled = true;
     };
-  }, [mode, _linkedIdsKey, writeOntologyId, applyVisibility, _reloadKey]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [mode, _linkedIdsKey, _visibleIdsKey, writeOntologyId, applyVisibility, _reloadKey]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Re-run layout when the user picks a different algorithm.
   // Visibility is already correct from the last filter pass, so we only need

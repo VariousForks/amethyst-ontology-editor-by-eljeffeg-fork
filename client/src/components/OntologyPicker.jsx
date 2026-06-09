@@ -458,8 +458,7 @@ export function OntologyProvider({ children }) {
     } else if (target) {
       // Switching to a root ontology:
       // - Ensure the root is visible.
-      // - If the previous write target was a branch, explicitly keep it visible
-      //   so the user can still see it after switching write elsewhere.
+      // - Remove all branches of this root from visible (parent/branch mutually exclusive).
       // - Remove this root and its child branches from linked.
       // - Leave ALL other unrelated ontologies untouched.
       const sid = String(id);
@@ -467,20 +466,10 @@ export function OntologyProvider({ children }) {
         allOntos.filter((o) => String(o.branch_of) === sid).map((o) => String(o.id)),
       );
       const prev = visibleIdsRef.current;
-      const prevWriteId = writeIdRef.current;
-      const prevWriteIsBranch = allOntos.some(
-        (o) => String(o.id) === String(prevWriteId) && o.branch_of != null,
-      );
       // Use .some() + String() to guard against integer vs string ID type mismatch.
       let next = prev.some((x) => String(x) === sid) ? prev : [id, ...prev];
-      // Explicitly re-add the previous branch write target if it got dropped.
-      if (
-        prevWriteIsBranch &&
-        String(prevWriteId) !== String(id) &&
-        !next.some((x) => String(x) === String(prevWriteId))
-      ) {
-        next = [...next, prevWriteId];
-      }
+      // Remove branches of this root — parent and branch are mutually exclusive in visible.
+      next = next.filter((x) => !branchIds.has(String(x)));
       _commitVisible(next);
       _commitLinked(
         linkedIdsRef.current.filter(
@@ -535,18 +524,28 @@ export function OntologyProvider({ children }) {
         if (visibleIdsRef.current.length <= 1) return;
         _commitVisible(visibleIdsRef.current.filter((x) => x !== id));
       } else {
-        // hidden (or stale linked) → full
+        // hidden → full; also remove parent (parent/branch mutually exclusive in visible)
         if (isLinked) _commitLinked(linkedIdsRef.current.filter((x) => x !== id));
-        _commitVisible([...visibleIdsRef.current, id]);
+        const parentId = allOntos.find((o) => String(o.id) === String(id))?.branch_of;
+        const withoutParent = parentId
+          ? visibleIdsRef.current.filter((x) => String(x) !== String(parentId))
+          : visibleIdsRef.current;
+        _commitVisible([...withoutParent, id]);
       }
     } else {
       if (!isVisible && !isLinked) {
         // hidden → linked
         _commitLinked([...linkedIdsRef.current, id]);
       } else if (isLinked) {
-        // linked → full
+        // linked → full; also remove any branches (parent/branch mutually exclusive in visible)
+        const branchIds = new Set(
+          allOntos.filter((o) => String(o.branch_of) === String(id)).map((o) => String(o.id)),
+        );
         _commitLinked(linkedIdsRef.current.filter((x) => x !== id));
-        _commitVisible([...visibleIdsRef.current, id]);
+        _commitVisible([
+          ...visibleIdsRef.current.filter((x) => !branchIds.has(String(x))),
+          id,
+        ]);
       } else {
         // full → hidden (guard: must keep at least 1 visible)
         if (visibleIdsRef.current.length <= 1) return;
@@ -780,6 +779,8 @@ function CurrentProjectPanel({
     const isWrite = sid === sWriteId;
     const isParentOfWriteBranch =
       !isBranch && writeBranchParentId != null && String(writeBranchParentId) === sid;
+    // Branch whose parent is the current write target — must be hidden (eye disabled).
+    const isChildOfWriteRoot = isBranch && String(o.branch_of) === sWriteId;
     return (
       <OntologyWorkspaceRow
         key={o.id}
@@ -790,6 +791,7 @@ function CurrentProjectPanel({
         isBranch={isBranch}
         isImported={!!o.is_imported}
         isParentOfWriteBranch={isParentOfWriteBranch}
+        isChildOfWriteRoot={isChildOfWriteRoot}
         colorIndex={colorIdx}
         onCycleState={() => onCycleState(o.id)}
         onSetWrite={() => onSetWrite(o.id)}
@@ -882,6 +884,7 @@ function OntologyWorkspaceRow({
   isBranch = false,
   isImported = false,
   isParentOfWriteBranch = false,
+  isChildOfWriteRoot = false,
   colorIndex = 0,
   onCycleState,
   onSetWrite,
@@ -891,30 +894,31 @@ function OntologyWorkspaceRow({
 
   // Eye button is disabled for:
   //  1. The write target (pinned to fully visible).
-  //  2. Any branch that is NOT the write target — must select as write target first.
-  //  3. The parent of a write-target branch — only one of parent/branch visible at a time.
-  const eyeDisabled = state === "write" || isBranch || isParentOfWriteBranch;
+  //  2. The parent of a write-target branch — only one of parent/branch visible at a time.
+  //  3. A branch whose parent is the write target — must stay hidden while parent is writable.
+  const eyeDisabled = state === "write" || isParentOfWriteBranch || isChildOfWriteRoot;
 
-  const eyeTitle = isBranch
-    ? state === "write"
-      ? "Write target — always fully visible"
-      : "Disabled — click the branch name to make it the write target"
+  const eyeTitle = isChildOfWriteRoot
+    ? "Disabled — this branch's parent is currently the write target"
     : isParentOfWriteBranch
       ? "Disabled — a branch of this ontology is currently the write target"
       : state === "write"
         ? "Write target — always fully visible"
         : state === "full"
-          ? "Fully visible — click to make linked-context only"
+          ? isBranch
+            ? "Fully visible — click to hide"
+            : "Fully visible — click to make linked-context only"
           : state === "linked"
             ? "Linked context (referenced entities only) — click to make fully visible"
-            : "Hidden — click to enable as linked context";
+            : isBranch
+              ? "Hidden — click to show"
+              : "Hidden — click to enable as linked context";
 
   const eyeColor =
     state === "write"
       ? "text-emerald-400 cursor-default"
-      : isBranch || isParentOfWriteBranch
-        ? // Locked out: always show as greyed-out & disabled
-          "text-slate-700 cursor-not-allowed opacity-40"
+      : isParentOfWriteBranch || isChildOfWriteRoot
+        ? "text-slate-700 cursor-not-allowed opacity-40"
         : state === "full"
           ? "text-slate-300 hover:text-amber-300"
           : state === "linked"
