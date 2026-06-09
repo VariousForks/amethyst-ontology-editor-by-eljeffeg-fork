@@ -324,6 +324,64 @@ router.get("/", requireAuth, resolveOntology, requireProjectRole("viewer"), (req
         kind: "equivalentClass",
       });
     }
+
+    // ── Subclasses of equivalent-class targets across ALL named graphs ────────
+    // When a write-ontology class A is declared owl:equivalentClass B (where B
+    // lives in a linked/imported named graph), B's children (C, D, …) are NOT
+    // found by the main subRows query above (which is scoped to effectiveScope,
+    // i.e. the write ontology only in linked-context mode).
+    // Searching ALL named graphs (null scope → GRAPH ?g pattern) guarantees that
+    // children of every equivalent-class target appear in the graph regardless
+    // of which named graph stores their rdfs:subClassOf triples.
+    if (equivRows.length > 0) {
+      const equivTargetIris = new Set();
+      for (const r of equivRows) {
+        if (r.a?.value) equivTargetIris.add(r.a.value);
+        if (r.b?.value) equivTargetIris.add(r.b.value);
+      }
+      const equivVals = [...equivTargetIris].map((iri) => `<${iri}>`).join(" ");
+      try {
+        const equivChildRows = cachedSelect(
+          PREFIXES +
+            `
+          SELECT DISTINCT ?child ?parent ?g WHERE {
+            GRAPH ?g {
+              VALUES ?parent { ${equivVals} }
+              ?child rdfs:subClassOf ?parent .
+              FILTER(!isBlank(?child) && isIRI(?child) && ?child != ?parent)
+            }
+          }`,
+          null, // null = search ALL named graphs via GRAPH ?g
+        );
+        const edgeIdSet = new Set(edges.map((e) => e.id));
+        for (const r of equivChildRows) {
+          const childIri = r.child?.value;
+          const parentIri = r.parent?.value;
+          const gIri = r.g?.value;
+          if (!childIri || !parentIri) continue;
+          // Tag each child node with its source ontology so the client does
+          // not treat it as an orphan cross-ontology reference (sourceOntologyId=null).
+          const sourceOntologyId = gIri?.startsWith(GRAPH_IRI_PREFIX)
+            ? gIri.slice(GRAPH_IRI_PREFIX.length)
+            : null;
+          addNode(childIri, "class", null, sourceOntologyId);
+          addNode(parentIri, "class");
+          const edgeId = `${childIri}->${parentIri}:sub`;
+          if (!edgeIdSet.has(edgeId)) {
+            edges.push({
+              id: edgeId,
+              source: childIri,
+              target: parentIri,
+              label: "subClassOf",
+              kind: "subClassOf",
+            });
+            edgeIdSet.add(edgeId);
+          }
+        }
+      } catch (_err) {
+        // Best-effort — degrade gracefully if the store can't handle GRAPH ?g.
+      }
+    }
   }
 
   if (mode === "individuals" || mode === "full") {

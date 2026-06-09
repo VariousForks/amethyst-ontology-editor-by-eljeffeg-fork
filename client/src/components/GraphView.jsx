@@ -1020,31 +1020,48 @@ export default function GraphView() {
           }
         });
 
-        // ── Hide "pure equivalent import" linked nodes ────────────────────────
-        // Only hide linked-context nodes whose ONLY *visible* connections are
-        // equivalentClass edges.  We evaluate each edge against the same
-        // kindOk / isInverse / isEquiv rules used in the edge-visibility pass
-        // below so that edges already hidden by the active edge-filter (e.g.
-        // objectProperty edges in hierarchy mode) don't count as structural.
+        // ── Hide equivalent-import linked nodes ───────────────────────────────
+        // When hideEquiv is ON, hide a linked node if it has an equivalentClass
+        // edge to a local (non-linked) node.  This always hides the imported
+        // twin regardless of whether it has children — the equiv-proxy subClassOf
+        // edges built at load time ensure those children remain visible and
+        // connected to the local equivalent instead.
+        // For linked nodes with NO local equivalent, fall back to the original
+        // rule: hide only when every connection is an equiv or inverse edge.
         if (hideEquiv) {
           cy.nodes("[linked]").forEach((n) => {
+            // Primary rule: hide if connected to a local class via equivalentClass.
+            const hasLocalEquiv = n.connectedEdges().some((e) => {
+              const k = e.data("kind");
+              const lbl = (e.data("label") || "").toLowerCase();
+              const isEquiv =
+                k === "equivalentClass" ||
+                lbl === "equivalentclass" ||
+                lbl === "equivalent class" ||
+                lbl.includes("equivalent");
+              if (!isEquiv) return false;
+              const other = e.source().id() === n.id() ? e.target() : e.source();
+              return !other.data("linked");
+            });
+            if (hasLocalEquiv) {
+              n.style("display", "none");
+              return;
+            }
+            // Fallback: hide if all visible structural edges are equiv/inverse.
             const hasVisibleStructuralEdge = n.connectedEdges().some((e) => {
               const k = e.data("kind");
               const lbl = (e.data("label") || "").toLowerCase();
-              // Would this edge be visible under the current filter?
               const kindOk =
                 ef === "both" ||
                 (ef === "hierarchy" && (k === "subClassOf" || k === "type")) ||
                 (ef === "relationships" && (k === "objectProperty" || k === "relation"));
               if (!kindOk) return false;
-              // Equiv edges are what we're trying to remove — don't count them.
               const isEquiv =
                 k === "equivalentClass" ||
                 lbl === "equivalentclass" ||
                 lbl === "equivalent class" ||
                 lbl.includes("equivalent");
               if (isEquiv) return false;
-              // Inverse edges that are being hidden don't count either.
               const isInv =
                 hideInv &&
                 (k === "inverseOf" ||
@@ -1065,6 +1082,19 @@ export default function GraphView() {
         // ── Edge visibility ────────────────────────────────────────────────────
         cy.edges().forEach((e) => {
           if (e.data("virtualRoot")) return;
+          // equiv-proxy subClassOf edges: shown whenever both endpoints are visible
+          // (subject to the hierarchy edge-filter).  This propagates OWL equivalence
+          // semantics — children of B appear as children of A when A ≡ B — and
+          // naturally keeps those children connected to A when B is hidden by the
+          // "Hide equivalent imports" toggle.
+          if (e.data("equivProxy")) {
+            const kindOk = ef === "both" || ef === "hierarchy";
+            e.style(
+              "display",
+              kindOk && e.source().visible() && e.target().visible() ? "element" : "none",
+            );
+            return;
+          }
           const kind = e.data("kind");
           const lbl = (e.data("label") || "").toLowerCase();
           // Edge categorization:
@@ -1613,6 +1643,60 @@ export default function GraphView() {
               e.data("isInverse", true);
             }
           });
+        }
+
+        // ── Build equiv-proxy subClassOf edges ────────────────────────────────
+        // For every owl:equivalentClass pair (A ≡ B), find children of B
+        // (subClassOf edges whose target is B) and add virtual subClassOf edges
+        // child → A.  Marked equivProxy: true so applyVisibility hides them by
+        // default and shows them only when hideEquiv is ON and B is hidden —
+        // keeping child nodes connected to the visible equivalent class.
+        {
+          const existingEdgeIds = new Set(cy.edges().map((e) => e.id()));
+          const proxyEdges = [];
+
+          cy.edges().forEach((equivEdge) => {
+            const kind = equivEdge.data("kind");
+            const lbl = (equivEdge.data("label") || "").toLowerCase();
+            const isEquiv =
+              kind === "equivalentClass" ||
+              lbl === "equivalentclass" ||
+              lbl === "equivalent class" ||
+              lbl.includes("equivalent");
+            if (!isEquiv) return;
+
+            const nodeA = equivEdge.data("source");
+            const nodeB = equivEdge.data("target");
+
+            // Both directions: children of B get a proxy to A and vice versa.
+            for (const [local, equiv] of [
+              [nodeA, nodeB],
+              [nodeB, nodeA],
+            ]) {
+              cy.edges('[kind = "subClassOf"]').forEach((sub) => {
+                if (sub.data("equivProxy")) return;
+                if (sub.data("target") !== equiv) return;
+                const child = sub.data("source");
+                if (child === local || child === equiv) return;
+                const edgeId = `equiv-proxy:${child}→${local}:through:${equiv}`;
+                if (existingEdgeIds.has(edgeId)) return;
+                proxyEdges.push({
+                  data: {
+                    id: edgeId,
+                    source: child,
+                    target: local,
+                    kind: "subClassOf",
+                    label: "subClassOf",
+                    equivProxy: true,
+                    equivProxyThrough: equiv,
+                  },
+                });
+                existingEdgeIds.add(edgeId);
+              });
+            }
+          });
+
+          if (proxyEdges.length) cy.add(proxyEdges);
         }
 
         const nodeCount = cy.nodes().length;

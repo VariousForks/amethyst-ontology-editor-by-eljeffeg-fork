@@ -1732,6 +1732,53 @@ router.get(
           }
         }
 
+        // ── Direct subclasses of matched linked classes ─────────────────────
+        // The reverseRef pass above only finds classes in the linked ontology
+        // that declare rdfs:subClassOf pointing to the WRITE ontology's classes.
+        // It does NOT find classes whose parent is another LINKED class (e.g.
+        // C subClassOf B, where B is the equivalent-class target in the linked
+        // ontology).  The transitive descendant walk below uses property paths
+        // which can fail silently; this VALUES-based direct query is the
+        // belt-and-suspenders guarantee that immediate children are always found.
+        if (matchedClassIris.size > 0) {
+          const equivChildVals = [...matchedClassIris].map((iri) => `<${iri}>`).join(" ");
+          try {
+            const equivChildRows = cachedSelect(
+              PREFIXES +
+                `
+              SELECT DISTINCT ?child ?label ?prefLabel ?comment ?definition WHERE {
+                VALUES ?parent { ${equivChildVals} }
+                ?child rdfs:subClassOf ?parent .
+                FILTER(!isBlank(?child) && isIRI(?child))
+                FILTER(?child != ?parent)
+                OPTIONAL { ?child rdfs:label ?label }
+                OPTIONAL { ?child skos:prefLabel ?prefLabel }
+                OPTIONAL { ?child rdfs:comment ?comment }
+                OPTIONAL { ?child skos:definition ?definition }
+              }`,
+              [searchId, primaryId],
+            );
+            for (const r of equivChildRows) {
+              const iri = r.child?.value;
+              if (!iri || matchedClassIris.has(iri)) continue;
+              // Store in reverseRefDetailMap so it ends up in ctx.classes output.
+              if (!reverseRefDetailMap.has(iri)) {
+                reverseRefDetailMap.set(iri, {
+                  label: r.label || null,
+                  prefLabel: r.prefLabel || null,
+                  comment: r.comment || null,
+                  definition: r.definition || null,
+                });
+              }
+              // Add to matchedClassIris so the ancestor/descendant walks also
+              // process this class's own children and ancestors.
+              matchedClassIris.add(iri);
+            }
+          } catch (_err) {
+            // Best-effort — degrade gracefully.
+          }
+        }
+
         // ── Step 2a: Walk the full ancestor chain via rdfs:subClassOf+ ───────
         // This surfaces grandparents, great-grandparents, etc. so the user
         // sees the complete inheritance path even though only the direct parent
