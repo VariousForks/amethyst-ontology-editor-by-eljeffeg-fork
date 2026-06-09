@@ -260,13 +260,24 @@ export function OntologyProvider({ children }) {
       }
 
       // Filter to only IDs that exist in this project.
-      let pickVisible = (savedVisible || []).filter((id) => projIdSet.has(id));
+      // Use String() to match against savedVisible values that may be strings after JSON.parse.
+      let pickVisible = (savedVisible || []).filter((id) =>
+        projOntos.some((o) => String(o.id) === String(id)),
+      ).map((id) => {
+        // Normalize back to the server's actual ID type (integer).
+        const match = projOntos.find((o) => String(o.id) === String(id));
+        return match ? match.id : id;
+      });
       const noSavedWorkspace = pickVisible.length === 0;
       if (noSavedWorkspace) pickVisible = projOntos.slice(0, 1).map((o) => o.id);
 
       const importedIds = new Set(projOntos.filter((o) => o.is_imported).map((o) => o.id));
+      // savedWrite is always a string from localStorage.getItem; match against server IDs.
+      const savedWriteOnto = savedWrite
+        ? projOntos.find((o) => String(o.id) === String(savedWrite))
+        : null;
       let pickWrite =
-        savedWrite && projIdSet.has(savedWrite) && !importedIds.has(savedWrite) ? savedWrite : null;
+        savedWriteOnto && !importedIds.has(savedWriteOnto.id) ? savedWriteOnto.id : null;
       if (!pickWrite) pickWrite = pickVisible.find((id) => !importedIds.has(id)) || null;
 
       // Restore per-project linked ontology IDs.
@@ -329,12 +340,20 @@ export function OntologyProvider({ children }) {
       savedWrite = localStorage.getItem(`${WRITE_ONTOLOGY_KEY}:${id}`);
     } catch {}
 
-    let pickVisible = (savedVisible || []).filter((oid) => projIdSet_.has(oid));
+    let pickVisible = (savedVisible || [])
+      .filter((oid) => (ontologies_ || []).some((o) => String(o.id) === String(oid)))
+      .map((oid) => {
+        const match = (ontologies_ || []).find((o) => String(o.id) === String(oid));
+        return match ? match.id : oid;
+      });
     const noSavedWorkspace = pickVisible.length === 0;
     if (noSavedWorkspace) pickVisible = ontologies_?.slice(0, 1).map((o) => o.id) || [];
 
+    const savedWriteOnto_ = savedWrite
+      ? (ontologies_ || []).find((o) => String(o.id) === String(savedWrite))
+      : null;
     let pickWrite =
-      savedWrite && projIdSet_.has(savedWrite) && !importedIds.has(savedWrite) ? savedWrite : null;
+      savedWriteOnto_ && !importedIds.has(savedWriteOnto_.id) ? savedWriteOnto_.id : null;
     if (!pickWrite) pickWrite = pickVisible.find((oid) => !importedIds.has(oid)) || null;
 
     _commitVisible(pickVisible);
@@ -439,15 +458,35 @@ export function OntologyProvider({ children }) {
     } else if (target) {
       // Switching to a root ontology:
       // - Ensure the root is visible.
-      // - Remove only its child branches from visible/linked.
-      // - Leave ALL other unrelated ontologies in the workspace untouched.
+      // - If the previous write target was a branch, explicitly keep it visible
+      //   so the user can still see it after switching write elsewhere.
+      // - Remove this root and its child branches from linked.
+      // - Leave ALL other unrelated ontologies untouched.
+      const sid = String(id);
       const branchIds = new Set(
-        allOntos.filter((o) => String(o.branch_of) === String(id)).map((o) => o.id),
+        allOntos.filter((o) => String(o.branch_of) === sid).map((o) => String(o.id)),
       );
       const prev = visibleIdsRef.current;
-      const kept = prev.filter((x) => !branchIds.has(x));
-      _commitVisible(kept.includes(id) ? kept : [id, ...kept]);
-      _commitLinked(linkedIdsRef.current.filter((x) => !branchIds.has(x)));
+      const prevWriteId = writeIdRef.current;
+      const prevWriteIsBranch = allOntos.some(
+        (o) => String(o.id) === String(prevWriteId) && o.branch_of != null,
+      );
+      // Use .some() + String() to guard against integer vs string ID type mismatch.
+      let next = prev.some((x) => String(x) === sid) ? prev : [id, ...prev];
+      // Explicitly re-add the previous branch write target if it got dropped.
+      if (
+        prevWriteIsBranch &&
+        String(prevWriteId) !== String(id) &&
+        !next.some((x) => String(x) === String(prevWriteId))
+      ) {
+        next = [...next, prevWriteId];
+      }
+      _commitVisible(next);
+      _commitLinked(
+        linkedIdsRef.current.filter(
+          (x) => !branchIds.has(String(x)) && String(x) !== sid,
+        ),
+      );
       _commitWrite(id);
     } else {
       // Fallback (ontology not yet loaded in projects list).
@@ -729,14 +768,18 @@ function CurrentProjectPanel({
 
   // If the current write target is a branch, its parent's eye should
   // also be disabled (only one of parent / branch visible at a time).
-  const writeOnto = ontologies.find((o) => o.id === writeOntologyId);
+  // Use String() throughout to handle integer vs string ID type mismatches.
+  const sWriteId = String(writeOntologyId);
+  const writeOnto = ontologies.find((o) => String(o.id) === sWriteId);
   const writeBranchParentId = writeOnto?.branch_of ?? null;
 
   const mkRow = (o, isBranch, colorIdx) => {
-    const isVisible = visibleSet.has(o.id);
-    const isLinked = linkedSet.has(o.id);
-    const isWrite = o.id === writeOntologyId;
-    const isParentOfWriteBranch = !isBranch && writeBranchParentId === o.id;
+    const sid = String(o.id);
+    const isVisible = visibleSet.has(o.id) || visibleSet.has(sid);
+    const isLinked = linkedSet.has(o.id) || linkedSet.has(sid);
+    const isWrite = sid === sWriteId;
+    const isParentOfWriteBranch =
+      !isBranch && writeBranchParentId != null && String(writeBranchParentId) === sid;
     return (
       <OntologyWorkspaceRow
         key={o.id}
