@@ -68,6 +68,13 @@ router.get("/", requireAuth, resolveOntology, requireProjectRole("viewer"), (req
       ? [String(effectiveScope)]
       : [];
   const multiScope = scopeIds.length > 1;
+  // Linked-context ontology IDs: passed by the client so the server can
+  // distinguish "linked" (children should be visible) from "hidden"
+  // (children should be suppressed) when tagging equivChildRows nodes.
+  const linkedOntologiesParam = (req.query.linkedOntologies || "").toString().trim();
+  const linkedOntologyIds = linkedOntologiesParam
+    ? linkedOntologiesParam.split(",").map((s) => s.trim()).filter(Boolean)
+    : [];
   const GRAPH_IRI_PREFIX = "urn:ontology-editor:onto:";
 
   function addNode(iri, kind, label, sourceOntologyId) {
@@ -359,11 +366,18 @@ router.get("/", requireAuth, resolveOntology, requireProjectRole("viewer"), (req
           const parentIri = r.parent?.value;
           const gIri = r.g?.value;
           if (!childIri || !parentIri) continue;
-          // Tag each child node with its source ontology so the client does
-          // not treat it as an orphan cross-ontology reference (sourceOntologyId=null).
-          const sourceOntologyId = gIri?.startsWith(GRAPH_IRI_PREFIX)
+          // Only tag with sourceOntologyId when the child's ontology is in the
+          // active scope OR is a linked-context ontology (client passed it via
+          // ?linkedOntologies=). Hidden ontologies get null so the client's
+          // orphan-node check hides their children correctly.
+          const rawOntologyId = gIri?.startsWith(GRAPH_IRI_PREFIX)
             ? gIri.slice(GRAPH_IRI_PREFIX.length)
             : null;
+          const sourceOntologyId =
+            rawOntologyId &&
+            (scopeIds.includes(rawOntologyId) || linkedOntologyIds.includes(rawOntologyId))
+              ? rawOntologyId
+              : null;
           addNode(childIri, "class", null, sourceOntologyId);
           addNode(parentIri, "class");
           const edgeId = `${childIri}->${parentIri}:sub`;

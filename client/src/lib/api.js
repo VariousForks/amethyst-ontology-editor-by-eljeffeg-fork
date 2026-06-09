@@ -659,11 +659,14 @@ export const api = {
   exportMarkdownUrl: () => withOntology(`${API}/ontology/export/markdown`),
 
   // Graph — cached; cleared by any ontology write above.
-  graph: (mode = "classes", limit = 500) => {
+  // linkedIds: array of linked-context ontology UUIDs; passed so the server
+  // can distinguish "linked" from "hidden" when tagging equiv-child nodes.
+  graph: (mode = "classes", limit = 500, linkedIds = []) => {
     let url = withOntology(`${API}/graph/?mode=${mode}&limit=${limit}`);
-    // Pass the write target so the server can prefer its labels over linked ontologies.
     if (currentWriteOntologyId)
       url += `&writeOntology=${encodeURIComponent(currentWriteOntologyId)}`;
+    if (linkedIds?.length)
+      url += `&linkedOntologies=${encodeURIComponent(linkedIds.join(","))}`;
     return cachedGet(url);
   },
 

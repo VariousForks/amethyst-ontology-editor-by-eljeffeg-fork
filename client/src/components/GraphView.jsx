@@ -1160,7 +1160,7 @@ export default function GraphView() {
     const linkedIds = linkedOntologyIdsRef.current;
 
     Promise.all([
-      api.graph(mode, 1000),
+      api.graph(mode, 1000, linkedIds),
       // Linked context only makes sense for class/full views — in individuals
       // mode there are no class hierarchy nodes to anchor context edges to,
       // and injecting them would show class nodes in an instances-only graph.
