@@ -310,16 +310,27 @@ router.get("/", requireAuth, resolveOntology, requireProjectRole("viewer"), (req
     //  (b) build the transitive-inheritance graph for the
     //      "Show inherited relationships" feature (equivalentClass peers
     //      inherit each other's object-property edges).
-    const equivRows = cachedSelect(
-      PREFIXES +
-        `
-      SELECT ?a ?b WHERE {
-        ?a owl:equivalentClass ?b .
-        FILTER(isIRI(?a) && isIRI(?b))
+    //
+    // Restrict to the visible+linked named graphs so equiv edges from
+    // completely unrelated ontologies (other projects) are excluded.
+    const equivScopeIds = [...new Set([...scopeIds, ...linkedOntologyIds])];
+    const equivGraphVals = equivScopeIds.map((id) => `<${graphIriFor(id)}>`).join(" ");
+    const equivRows =
+      equivScopeIds.length > 0
+        ? cachedSelect(
+            PREFIXES +
+              `
+      SELECT DISTINCT ?a ?b WHERE {
+        VALUES ?g { ${equivGraphVals} }
+        GRAPH ?g {
+          ?a owl:equivalentClass ?b .
+          FILTER(isIRI(?a) && isIRI(?b))
+        }
       } LIMIT ${limit}
     `,
-      scope,
-    );
+            null,
+          )
+        : [];
     for (const r of equivRows) {
       addNode(r.a.value, "class");
       addNode(r.b.value, "class");
@@ -520,6 +531,44 @@ router.get("/", requireAuth, resolveOntology, requireProjectRole("viewer"), (req
   // ontology was outside the main query scope.  Search ALL named graphs for
   // their labels; write-graph skos:prefLabel wins, then any prefLabel, then
   // rdfs:label, then the original shortLabel fallback is left unchanged.
+  // All nodes with a null sourceOntologyId — these are cross-ontology parents
+  // (subClassOf / domain / range targets) that were added without a source tag
+  // because they weren't found by the classRows query (e.g. not explicitly
+  // typed as owl:Class in their owning graph).  In multi-scope view mode these
+  // nodes get hidden by the client's orphan-node check.  Fix: find which scope
+  // graph each orphan node is actually declared in and backfill the id.
+  const orphanNodes = [...nodes.entries()].filter(([, n]) => !n.sourceOntologyId);
+  if (orphanNodes.length > 0 && scopeIds.length > 0) {
+    const orphanVals = orphanNodes.map(([iri]) => `<${iri}>`).join(" ");
+    const scopeGraphVals = scopeIds.map((id) => `<${graphIriFor(id)}>`).join(" ");
+    try {
+      // Use ?c ?p ?o (node as subject) rather than ?c a owl:Class — a class
+      // referenced only as a rdfs:subClassOf target may not carry an explicit
+      // owl:Class declaration, but it will have at least one own triple in its
+      // defining ontology (labels, annotations, other subClassOf statements, etc.).
+      const orphanGraphRows = cachedSelect(
+        `${PREFIXES}
+        SELECT DISTINCT ?c ?g WHERE {
+          VALUES ?c { ${orphanVals} }
+          VALUES ?g { ${scopeGraphVals} }
+          GRAPH ?g { ?c ?p ?o }
+        }`,
+        null,
+      );
+      for (const r of orphanGraphRows) {
+        const iri = r.c?.value;
+        const gIri = r.g?.value;
+        if (!iri || !gIri || !nodes.has(iri)) continue;
+        const node = nodes.get(iri);
+        if (!node.sourceOntologyId && gIri.startsWith(GRAPH_IRI_PREFIX)) {
+          node.sourceOntologyId = gIri.slice(GRAPH_IRI_PREFIX.length);
+        }
+      }
+    } catch (_err) {
+      // Best-effort — non-fatal.
+    }
+  }
+
   const needsLabel = [...nodes.entries()].filter(([iri, n]) => n.label === shortLabel(iri));
   if (needsLabel.length > 0) {
     const vals = needsLabel.map(([iri]) => `<${iri}>`).join(" ");
