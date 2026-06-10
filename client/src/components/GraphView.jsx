@@ -1,6 +1,6 @@
-import cytoscape from "cytoscape";
-import dagre from "cytoscape-dagre";
 import fcose from "cytoscape-fcose";
+import elk from "cytoscape-elk";
+import cytoscape from "cytoscape";
 import {
   ChevronDown,
   Download,
@@ -30,7 +30,7 @@ import { Field, Modal } from "./ClassesView.jsx";
 import EntityDetail from "./EntityDetail.jsx";
 import { useProject } from "./OntologyPicker.jsx";
 
-cytoscape.use(dagre);
+cytoscape.use(elk);
 cytoscape.use(fcose);
 
 // Returns the node itself plus the directly-connected edges and their endpoint
@@ -332,93 +332,65 @@ const STYLES = [
     style: { opacity: 0.18, "text-opacity": 0.5 },
   },
 
-  // ── temporarily hides elements during layout so the layout algorithm
-  // never asks for their bounding boxes (which would trigger the
-  // "invalid endpoints" warning for self-loop edges).
-  {
-    selector: ".layout-hidden",
-    style: { display: "none" },
-  },
-
-  // ── virtual root: invisible 1×1 node used only during dagre layout to give
-  // orphan nodes (no subClassOf edges) a proper rank assignment so they appear
-  // above the tree rather than mixing with leaf children.
-  {
-    selector: "node[?virtualRoot]",
-    style: {
-      opacity: 0,
-      width: 1,
-      height: 1,
-      "text-opacity": 0,
-      events: "no",
-    },
-  },
 ];
 
-// Unique ID for the transient virtual root node used in syncVirtualRoot.
-const VROOT_ID = "_vroot_dagre_";
+// Mulberry32 — fast, 32-bit seeded PRNG. Returns a function that yields
+// floats in [0, 1) deterministically from the given integer seed.
+function seededRng(seed) {
+  let s = seed;
+  return () => {
+    s = (s + 0x6d2b79f5) | 0;
+    let t = Math.imul(s ^ (s >>> 15), 1 | s);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
 
 const LAYOUTS = {
   verticalTree: {
-    name: "dagre",
-    rankDir: "BT",
-    ranker: "tight-tree",
-    nodeSep: 55,
-    rankSep: 110,
-    edgeSep: 22,
+    name: "elk",
+    elk: {
+      algorithm: "layered",
+      "elk.direction": "UP",
+      "elk.layered.spacing.nodeNodeBetweenLayers": "110",
+      "elk.spacing.nodeNode": "55",
+      "elk.layered.crossingMinimization.strategy": "LAYER_SWEEP",
+      "elk.separateConnectedComponents": "true",
+    },
+    nodeDimensionsIncludeLabels: true,
     animate: true,
     animationDuration: 450,
     fit: true,
     padding: 50,
-    sort: (a, b) => {
-      const nameA = (a.data("label") || a.id()).toLowerCase();
-      const nameB = (b.data("label") || b.id()).toLowerCase();
-      return nameA.localeCompare(nameB); // Alphabetical A → Z
-    },
   },
   horizontalTree: {
-    name: "dagre",
-    rankDir: "RL",
-    ranker: "tight-tree",
-    nodeSep: 50,
-    rankSep: 150,
-    edgeSep: 22,
+    name: "elk",
+    elk: {
+      algorithm: "layered",
+      "elk.direction": "LEFT",
+      "elk.layered.spacing.nodeNodeBetweenLayers": "150",
+      "elk.spacing.nodeNode": "50",
+      "elk.layered.crossingMinimization.strategy": "LAYER_SWEEP",
+      "elk.separateConnectedComponents": "true",
+    },
+    nodeDimensionsIncludeLabels: true,
     animate: true,
     animationDuration: 450,
     fit: true,
     padding: 50,
-    sort: (a, b) => {
-      const nameA = (a.data("label") || a.id()).toLowerCase();
-      const nameB = (b.data("label") || b.id()).toLowerCase();
-      return nameA.localeCompare(nameB); // Alphabetical A → Z
-    },
   },
   force: {
     name: "fcose",
-    quality: "proof",
     animate: true,
-    animationDuration: 700,
-    // Repulsion between every pair of non-adjacent nodes. Raising this is the
-    // primary lever for preventing overlap on dense graphs.
-    nodeRepulsion: 85000,
-    // Minimum extra gap between any two node bounding boxes after layout.
-    nodeSeparation: 200,
-    // Desired distance between directly-connected nodes. Larger values give
-    // edges more breathing room, which in turn spreads the whole graph out.
-    idealEdgeLength: 300,
-    // Edge length stiffness — lower means edges can stretch more freely,
-    // letting repulsion push nodes apart without fighting spring forces.
-    edgeElasticity: 0.25,
-    // Weak centre gravity keeps isolated clusters from drifting off-screen
-    // without overpowering the repulsion.
-    gravity: 0.1,
-    gravityRange: 3.5,
-    // More iterations let the simulation settle further before stopping.
-    numIter: 4000,
-    packComponents: true,
-    nestingFactor: 1.2,
+    animationDuration: 400,
     fit: true,
     padding: 50,
+    randomize: true,
+    nodeRepulsion: 10000,
+    idealEdgeLength: 200,
+    edgeElasticity: 0.6,
+    nodeSeparation: 200,
+    numIter: 2500,
   },
   grid: {
     name: "grid",
@@ -438,165 +410,32 @@ const LAYOUTS = {
   },
 };
 
-// ── Adaptive force-layout parameters ─────────────────────────────────────────
-// The fCose simulation uses spring forces (edges pull nodes together) that
-// compete against repulsion (nodes push each other apart).  A single static
-// set of parameters cannot serve both:
-//   • Sparse graphs (hierarchy-only, ~1 edge/node): need generous spacing and
-//     moderate repulsion so the structure unfolds naturally.
-//   • Dense graphs (inherited relationships on, 5-10+ edges/node): need much
-//     stronger repulsion and shorter ideal edges to prevent nodes from
-//     collapsing into an unreadable ball, plus stronger gravity to keep the
-//     whole graph on screen.
-//
-// Strategy: compute the visible edge-to-node density ratio and linearly
-// interpolate (lerp) each key parameter between "sparse" and "dense" presets.
-// All other layouts (dagre, grid, concentric) use the static LAYOUTS object.
-
-function lerp(a, b, t) {
-  return a + (b - a) * t;
-}
-
 /**
- * Build a density-aware fCose layout config for the force layout.
- * @param {number} nodeCount  Visible nodes count.
- * @param {number} edgeCount  Visible edges count.
- */
-function getForceLayout(nodeCount, edgeCount) {
-  // Edge-to-node ratio is the density signal.
-  // A pure hierarchy tree has ratio ~1; turning on inherited relationships
-  // typically pushes it to 2–5+.
-  const density = nodeCount > 0 ? edgeCount / nodeCount : 0;
-
-  // Interpolation factor: 0 = sparse (ratio ≤ 1.5), 1 = dense (ratio ≥ 5).
-  const t = Math.min(1, Math.max(0, (density - 1.5) / 3.5));
-
-  // Secondary factor based on absolute node count.
-  const sizeT = Math.min(1, Math.max(0, (nodeCount - 15) / 85));
-
-  // ── Physics reasoning for dense graphs (hub-and-spoke pattern) ─────────
-  // Inherited relationships create many edges from subclass nodes to the same
-  // range/domain "hub" nodes.  The total spring attraction on each hub scales
-  // with the number of connected spokes.  Two levers defeat this:
-  //
-  //   1. Longer idealEdgeLength — the energy minimum sits at a more-spread-out
-  //      configuration, so repulsion wins the tug-of-war with springs.
-  //      (Short lengths create a tight potential well that even high repulsion
-  //      cannot escape — this is why 60 px caused bunching.)
-  //
-  //   2. Very low edgeElasticity — each spring pulls with much less force.
-  //      With elasticity 0.04, ten edges pull with the same total force as one
-  //      edge at the sparse setting of 0.40, keeping repulsion dominant.
-  //
-  // Gravity must stay very weak so it doesn't fight repulsion and push
-  // everything back into the center.
-
-  return {
-    name: "fcose",
-    quality: "proof",
-    animate: true,
-    animationDuration: 700,
-
-    // Repulsion: sparse preset is slightly above the original static value (85k)
-    // to prevent the minor node overlap seen with that setting.  Dense preset
-    // must massively outcompete the accumulated spring forces from many edges.
-    nodeRepulsion: Math.round(lerp(110000, 2000000, t)),
-
-    // nodeSeparation: controls initial node placement spacing.  The original
-    // static config used 200 for sparse graphs — restoring that gives the
-    // simulation enough breathing room to converge without node overlap.
-    nodeSeparation: Math.round(lerp(200, 100, t)),
-
-    // Longer springs push spokes further from hubs in dense mode.
-    // Dense preset is LONGER than sparse to avoid the tight potential-well trap
-    // (short ideal lengths create a tight energy minimum that high repulsion
-    // cannot escape).
-    idealEdgeLength: Math.round(lerp(280, 380, t)),
-
-    // Sparse preset uses the original proven elasticity.
-    // Very weak springs for dense so accumulated attraction from many edges
-    // stays low: 10 edges at 0.04 ≈ 1 edge at the sparse setting of 0.25.
-    edgeElasticity: lerp(0.25, 0.04, t),
-
-    // Sparse: moderate gravity keeps isolated clusters on-screen.
-    // Dense: very weak gravity — let the massive repulsion spread the graph;
-    // too-high gravity recreates the bunching problem.
-    gravity: lerp(0.1, 0.06, t),
-    gravityRange: lerp(3.5, 7, t),
-
-    // More iterations for dense graphs to converge.
-    numIter: Math.round(lerp(4000, 8000, t)),
-
-    packComponents: true,
-    nestingFactor: 1.2,
-    fit: true,
-    padding: Math.round(lerp(50, 30, sizeT)),
-  };
-}
-
-/**
- * Before running a dagre tree layout, inject a hidden virtual root node and
- * connect every orphan (no visible subClassOf edges) to it as a child.
- * This gives orphans a dagre rank one step below the root rather than rank 0
- * (leaf rank), so they appear as their own group at the top of the tree
- * rather than mixing with the deepest leaf children.
+ * Build an fcose layout config with relativePlacementConstraints so that
+ * subClassOf parent nodes are always placed above their children.
+ * Base settings come from LAYOUTS.force; only the constraints are computed here.
  *
- * For non-tree layouts (force / grid / concentric) this is a no-op and any
- * stale virtual root left over from a previous tree run is cleaned up.
+ * @param {import('cytoscape').Core} cy
  */
-function syncVirtualRoot(cy, layoutName) {
-  // Remove any stale virtual root from a previous run first.
-  const prev = cy.getElementById(VROOT_ID);
-  if (prev.length) {
-    cy.edges("[?virtualRoot]").remove();
-    prev.remove();
-  }
-
-  if (layoutName !== "verticalTree" && layoutName !== "horizontalTree") return;
-
-  // Find visible orphan nodes: no connected visible subClassOf edge.
-  const orphans = cy.nodes(":visible").filter(
-    (n) => !n.connectedEdges('[kind = "subClassOf"]').some((e) => e.visible()),
-  );
-  if (!orphans.length) return;
-
-  // Add the invisible root node.
-  cy.add({ data: { id: VROOT_ID, label: "", kind: "class", virtualRoot: true } });
-
-  // Add a subClassOf edge from each orphan (child) to the virtual root (parent).
-  // dagre interprets source=child, target=parent and assigns the root the
-  // highest rank so orphans land one rank below it — away from the leaf row.
-  const edges = [];
-  orphans.forEach((n) => {
-    edges.push({
-      data: {
-        id: `_vr_${n.id()}`,
-        source: n.id(),
-        target: VROOT_ID,
-        kind: "subClassOf",
-        virtualRoot: true,
-      },
-    });
+function getForceLayout(cy) {
+  const relativePlacementConstraint = [];
+  cy.edges(":visible[kind = \"subClassOf\"]").forEach((e) => {
+    const childId = e.data("source");
+    const parentId = e.data("target");
+    if (childId !== parentId) {
+      // top = parent (sits above), bottom = child.
+      relativePlacementConstraint.push({ top: parentId, bottom: childId, gap: 80 });
+    }
   });
-  if (edges.length) cy.add(edges);
+  return { ...LAYOUTS.force, relativePlacementConstraint };
 }
 
 /**
  * Return the layout config for the given layout name.
- * For "force", the config is computed adaptively from the current visible
- * element counts so that both sparse and dense graphs look good.
- * All other layouts fall through to the static LAYOUTS map.
- *
- * @param {string} layoutName  Key in LAYOUTS (or "force").
- * @param {import('cytoscape').Core} cy  The Cytoscape instance.
+ * For "force", constraints are built from the current visible subClassOf edges.
  */
 function getLayout(layoutName, cy) {
-  if (layoutName === "force") {
-    const visible = cy.elements(":visible");
-    const nodeCount = visible.nodes().length;
-    const edgeCount = visible.edges().length;
-    return getForceLayout(nodeCount, edgeCount);
-  }
+  if (layoutName === "force") return getForceLayout(cy);
   return LAYOUTS[layoutName];
 }
 
@@ -901,58 +740,6 @@ export default function GraphView() {
       }
     });
 
-    // After every layout run, remove the temporary .layout-hidden class from
-    // self-loop edges and the virtual root node/edges (added by syncVirtualRoot
-    // before each dagre run to give orphan nodes a proper rank assignment).
-    cy.on("layoutstop", () => {
-      cy.elements(".layout-hidden").removeClass("layout-hidden");
-      const vr = cy.getElementById(VROOT_ID);
-      if (vr.length) {
-        // Sort only the orphan nodes (vroot children) A→Z by swapping their X
-        // positions. dagre's crossing-minimisation sets within-rank order
-        // independently of the sort comparator, so we fix it post-layout.
-        const vrEdges = cy.edges("[?virtualRoot]");
-        const orphans = vrEdges
-          .map((e) => cy.getElementById(e.data("source")))
-          .filter((n) => n.length);
-        if (orphans.length > 1) {
-          const isVertical = layoutRef.current === "verticalTree";
-          const gap = isVertical ? 55 : 50; // nodeSep for each layout
-          const sorted = [...orphans].sort((a, b) => {
-            const na = (a.data("label") || a.id()).toLowerCase();
-            const nb = (b.data("label") || b.id()).toLowerCase();
-            return na.localeCompare(nb);
-          });
-          cy.batch(() => {
-            if (isVertical) {
-              // Space along X with equal gaps between bounding boxes.
-              const totalW = sorted.reduce((s, n) => s + n.outerWidth(), 0);
-              const totalSpan = totalW + gap * (sorted.length - 1);
-              const centerX =
-                orphans.reduce((s, n) => s + n.position("x"), 0) / orphans.length;
-              let x = centerX - totalSpan / 2;
-              sorted.forEach((n) => {
-                n.position("x", x + n.outerWidth() / 2);
-                x += n.outerWidth() + gap;
-              });
-            } else {
-              // horizontalTree: same rank = same X, so space along Y.
-              const totalH = sorted.reduce((s, n) => s + n.outerHeight(), 0);
-              const totalSpan = totalH + gap * (sorted.length - 1);
-              const centerY =
-                orphans.reduce((s, n) => s + n.position("y"), 0) / orphans.length;
-              let y = centerY - totalSpan / 2;
-              sorted.forEach((n) => {
-                n.position("y", y + n.outerHeight() / 2);
-                y += n.outerHeight() + gap;
-              });
-            }
-          });
-        }
-        vrEdges.remove();
-        vr.remove();
-      }
-    });
 
     return () => {
       cy.destroy();
@@ -1002,7 +789,6 @@ export default function GraphView() {
       cy.batch(() => {
         // ── Node visibility (query filter) ────────────────────────────────────
         cy.nodes().forEach((n) => {
-          if (n.data("virtualRoot")) return;
           const match =
             !ql || n.data("label").toLowerCase().includes(ql) || n.id().toLowerCase().includes(ql);
           n.style("display", match ? "element" : "none");
@@ -1018,7 +804,6 @@ export default function GraphView() {
         // Therefore: if sourceOntologyId is null AND linked is not set, the
         // node belongs to a hidden ontology and must not be shown.
         cy.nodes().forEach((n) => {
-          if (n.data("virtualRoot")) return;
           if (n.style("display") === "none") return; // already hidden
           if (n.data("sourceOntologyId") === null && !n.data("linked")) {
             n.style("display", "none");
@@ -1086,7 +871,6 @@ export default function GraphView() {
 
         // ── Edge visibility ────────────────────────────────────────────────────
         cy.edges().forEach((e) => {
-          if (e.data("virtualRoot")) return;
           // equiv-proxy subClassOf edges: shown whenever both endpoints are visible
           // (subject to the hierarchy edge-filter).  This propagates OWL equivalence
           // semantics — children of B appear as children of A when A ≡ B — and
@@ -1741,8 +1525,6 @@ export default function GraphView() {
             cy.animate({ center: { eles: _node }, zoom: 1.5, duration: 400 });
           });
         }
-        cy.edges("[?selfLoop]").addClass("layout-hidden");
-        syncVirtualRoot(cy, layoutRef.current);
         cy.elements(":visible").layout(getLayout(layoutRef.current, cy)).run();
       })
       .catch((e) => {
@@ -1757,14 +1539,12 @@ export default function GraphView() {
   }, [mode, _linkedIdsKey, _visibleIdsKey, writeOntologyId, applyVisibility, _reloadKey]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Re-run layout when the user picks a different algorithm.
-  // Visibility is already correct from the last filter pass, so we only need
-  // to re-layout the currently visible elements.
+  // fcose (force) uses animate: true and handles smooth interpolation natively
+  // like ELK/grid/concentric — no custom batching needed.
   useEffect(() => {
     const cy = cyRef.current;
     if (!cy?.nodes().length) return;
     layoutRunRef.current?.stop();
-    cy.edges("[?selfLoop]").addClass("layout-hidden");
-    syncVirtualRoot(cy, layout);
     layoutRunRef.current = cy.elements(":visible").layout(getLayout(layout, cy));
     layoutRunRef.current.run();
   }, [layout]);
@@ -1795,8 +1575,6 @@ export default function GraphView() {
       // nodes don't flash or animate to multiple intermediate positions when
       // the user types quickly in the filter box.
       layoutRunRef.current?.stop();
-      cy.edges("[?selfLoop]").addClass("layout-hidden");
-      syncVirtualRoot(cy, layoutRef.current);
       layoutRunRef.current = cy.elements(":visible").layout(getLayout(layoutRef.current, cy));
       layoutRunRef.current.run();
     }

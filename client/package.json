@@ -9,21 +9,21 @@
     "preview": "vite preview"
   },
   "dependencies": {
-    "cytoscape": "^3.33.4",
-    "cytoscape-dagre": "^3.0.0",
+    "cytoscape": "^3.34.0",
+    "cytoscape-elk": "^2.3.0",
     "cytoscape-fcose": "^2.2.0",
     "lucide-react": "^1.17.0",
-    "marked": "^18.0.4",
-    "react": "^19.2.6",
-    "react-dom": "^19.2.6",
-    "react-router-dom": "^7.16.0"
+    "marked": "^18.0.5",
+    "react": "^19.2.7",
+    "react-dom": "^19.2.7",
+    "react-router-dom": "^7.17.0"
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4.3.0",
     "@tailwindcss/vite": "^4.3.0",
-    "@types/react": "^19.2.15",
+    "@types/react": "^19.2.17",
     "@types/react-dom": "^19.2.3",
     "@vitejs/plugin-react": "^6.0.2",
-    "vite": "^8.0.14"
+    "vite": "^8.0.16"
   }
 }
