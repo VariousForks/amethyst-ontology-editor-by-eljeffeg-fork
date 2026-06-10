@@ -2845,7 +2845,7 @@ function GraphNewClassModal({ onClose, onCreated }) {
 
   useEffect(() => {
     api
-      .classesAll()
+      .classes()
       .then((r) => setAllClasses(r.classes || []))
       .catch(() => {});
   }, []);
@@ -2949,7 +2949,7 @@ function GraphNewPropertyModal({ onClose, onCreated }) {
 
   useEffect(() => {
     api
-      .classesAll()
+      .classes()
       .then((r) => setAllClasses(r.classes || []))
       .catch(() => {});
   }, []);
@@ -3110,7 +3110,7 @@ function GraphNewIndividualModal({ onClose, onCreated }) {
 
   useEffect(() => {
     api
-      .classesAll()
+      .classes()
       .then((r) => setAllClasses(r.classes || []))
       .catch(() => {});
   }, []);
