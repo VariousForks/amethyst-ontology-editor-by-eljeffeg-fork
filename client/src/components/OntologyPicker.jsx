@@ -165,8 +165,7 @@ export function OntologyProvider({ children }) {
       const pid = currentProjectIdRef.current;
       // Store linked state per-project so "first visit" is detectable per project.
       const key = pid ? `${LINKED_ONTOLOGIES_KEY}:${pid}` : LINKED_ONTOLOGIES_KEY;
-      if (ids.length > 0) localStorage.setItem(key, JSON.stringify(ids));
-      else localStorage.removeItem(key);
+      localStorage.setItem(key, JSON.stringify(ids));
     } catch {}
   }, []);
 

@@ -812,10 +812,10 @@ function NewPropertyModal({ onClose, onCreated, initialKind = "object" }) {
   const [busy, setBusy] = useState(false);
   const [allClasses, setAllClasses] = useState([]);
 
-  // Load ALL project classes (ignores visibility) for domain/range pickers.
+  // Load visible-scope classes for domain/range pickers.
   useEffect(() => {
     api
-      .classesAll()
+      .classes()
       .then((r) => setAllClasses(r.classes || []))
       .catch(() => {});
   }, []);

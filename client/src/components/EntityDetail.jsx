@@ -197,12 +197,10 @@ export default function EntityDetail({ iri, kind, onDelete, onUpdate, onClose, c
   }, [iri]);
 
   // Load class / property candidate lists once per component mount.
-  // Uses project-wide scope (all ontologies) so hidden-ontology classes and
-  // properties are always available in pickers and inherited-property lists,
-  // regardless of which ontologies are currently visible in the workspace.
+  // Uses visible scope so pickers respect the current workspace visibility.
   useEffect(() => {
     api
-      .classesAll()
+      .classes()
       .then((r) => setClassList(r.classes))
       .catch(() => setClassList([]));
     api
@@ -3331,7 +3329,7 @@ function AxiomsSection({
   useEffect(() => {
     if (isClassKind && !classList)
       api
-        .classesAll()
+        .classes()
         .then((r) => setClassList(r.classes))
         .catch(() => setClassList([]));
     if (isPropertyKind && !propList)
