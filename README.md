@@ -80,6 +80,14 @@ docker compose up
 
 Open http://localhost:3000 — the first account you register becomes admin.
 
+On a different host port (to avoid clashing with other workloads):
+
+```bash
+AMETHYST_PORT=8137 docker compose up   # then open http://localhost:8137
+```
+
+`AMETHYST_PORT` only remaps the published host port; the container still listens on `3000` internally. It can also be set in a `.env` file in the project root.
+
 Data persists in the named volume `amethyst`. To start fresh:
 
 ```bash

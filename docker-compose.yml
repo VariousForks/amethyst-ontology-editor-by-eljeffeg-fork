@@ -6,7 +6,10 @@ services:
     image: eljeffe/amethyst-ontology-editor:latest
     container_name: amethyst
     ports:
-      - "3000:3000"
+      # Host port is overridable to avoid clashes with other workloads:
+      #   AMETHYST_PORT=8137 docker compose up   (or set it in a .env file)
+      # The container always listens on 3000 internally (see PORT below).
+      - "${AMETHYST_PORT:-3000}:3000"
     environment:
       - NODE_ENV=production
       - PORT=3000
